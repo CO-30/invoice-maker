@@ -1,0 +1,26 @@
+name: Deploy GAS
+# gas/ 配下が変わって main に push されたら、Apps Script に push して既存デプロイを新バージョンに更新する
+on:
+  push:
+    branches: [main]
+    paths: ["gas/**"]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install clasp
+        run: npm install -g @google/clasp
+      - name: Write credentials
+        run: |
+          echo '${{ secrets.CLASPRC_JSON }}' > ~/.clasprc.json
+          echo '{"scriptId":"${{ secrets.SCRIPT_ID }}","rootDir":"gas"}' > .clasp.json
+      - name: Push code
+        run: clasp push -f
+      - name: Update deployment
+        run: clasp deploy -i "${{ secrets.DEPLOYMENT_ID }}" -d "auto $(date +%Y-%m-%d_%H%M)"
