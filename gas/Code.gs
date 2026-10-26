@@ -14,7 +14,13 @@
  * PDFはスプレッドシートと同じフォルダ内の「見積請求PDF」フォルダに保存されます
  */
 const API_KEY = "change-me-1234";
-const PDF_FOLDER_NAME = "見積請求PDF";
+// PDFの保存先（種別ごと）。IDを空にするとスプレッドシートと同じ場所に自動でフォルダを作ります
+const PDF_FOLDERS = {
+  estimate: "1eh0_UxpRyQfE1uUSZK5DtXhldbhYW-dg", // 見積
+  invoice:  "1fwWjgv4k2GfkLi4AXHZnuzQ_XYkwO-V_", // 請求書
+  receipt:  ""                                   // 領収書（空なら「領収書」フォルダを自動作成）
+};
+const PDF_FOLDER_NAMES = {estimate:"見積", invoice:"請求書", receipt:"領収書"};
 // 既存のExcel（お見積書.xlsx／請求書.xlsx など）が入っているGoogleドライブのフォルダID
 // フォルダを開いたときのURL https://drive.google.com/drive/folders/【ここ】 の部分
 const IMPORT_FOLDER_IDS = [
@@ -119,16 +125,20 @@ function putSettings_(s){
   if(sh.getLastRow()>=2) sh.getRange(2,1,1,3).setValues([row]); else sh.appendRow(row);
 }
 
-function pdfFolder_(){
+function pdfFolder_(type){
+  const id = PDF_FOLDERS[type];
+  if(id){ try{ return DriveApp.getFolderById(id); }catch(e){} }
+  // 指定なし／開けない → スプレッドシートと同じ場所に種別名のフォルダを作る
   const file = DriveApp.getFileById(ss_().getId());
   const parents = file.getParents(); const parent = parents.hasNext()?parents.next():DriveApp.getRootFolder();
-  const it = parent.getFoldersByName(PDF_FOLDER_NAME);
-  return it.hasNext()?it.next():parent.createFolder(PDF_FOLDER_NAME);
+  const name = PDF_FOLDER_NAMES[type] || "書類PDF";
+  const it = parent.getFoldersByName(name);
+  return it.hasNext()?it.next():parent.createFolder(name);
 }
 function savePdf_(req){
   const bytes = Utilities.base64Decode(req.data);
   const blob = Utilities.newBlob(bytes, "application/pdf", req.name||"document.pdf");
-  const folder = pdfFolder_();
+  const folder = pdfFolder_(req.type || "invoice");
   // 同名ファイルがあれば上書き相当（古いものをゴミ箱へ）
   const old = folder.getFilesByName(blob.getName()); while(old.hasNext()) old.next().setTrashed(true);
   const f = folder.createFile(blob);
