@@ -115,10 +115,14 @@ details.help summary{font-size:13px;color:var(--accent);font-weight:700;cursor:p
       <button data-t="receipt">領収書</button>
     </div>
     <div class="row" style="margin-top:10px">
-      <div><label class="f" id="lblNo">No.</label><input type="text" id="no" inputmode="numeric"></div>
-      <div><label class="f" id="lblDate">日付</label><input type="date" id="date"></div>
+      <div><label class="f">案件番号</label><input type="text" id="base" placeholder="2610-001"></div>
+      <div><label class="f" id="lblNo">No.</label><input type="text" id="no"></div>
     </div>
-    <div id="dueWrap"><label class="f" id="lblDue">お支払期限</label><input type="date" id="due"></div>
+    <div class="row">
+      <div><label class="f" id="lblDate">日付</label><input type="date" id="date"></div>
+      <div id="dueWrap"><label class="f" id="lblDue">お支払期限</label><input type="date" id="due"></div>
+    </div>
+    <p class="hint">案件番号は「年月-連番」で自動採番。同じ案件の見積・請求・領収は同じ案件番号を持ち、書類No.は 頭文字＋案件番号（再発行は -2, -3…）になります。</p>
   </div>
 
   <div class="card">
@@ -164,7 +168,10 @@ details.help summary{font-size:13px;color:var(--accent);font-weight:700;cursor:p
     </div>
     <div class="btnrow">
       <button class="btn ghost" id="btnConvert">請求書に変換</button>
-      <button class="btn ghost" id="btnDup">複製</button>
+      <button class="btn ghost" id="btnRevise">再発行（改訂版）</button>
+    </div>
+    <div class="btnrow">
+      <button class="btn ghost" id="btnDup">複製（別案件）</button>
       <button class="btn danger" id="btnDelete">削除</button>
     </div>
     <p class="hint">「PDFを作成して共有」を押すと、iPhoneでは共有シートが開き、そのままLINE・メール・ファイルに保存ができます。</p>
@@ -211,6 +218,8 @@ details.help summary{font-size:13px;color:var(--accent);font-weight:700;cursor:p
     <label class="f">電話</label><input type="tel" id="s_tel">
     <label class="f">メール</label><input type="email" id="s_email">
     <label class="f">登録番号（インボイス制度・任意）</label><input type="text" id="s_regno" placeholder="T1234567890123">
+    <label class="f">書類No.の頭文字（見積／請求／領収）</label>
+    <div class="row"><input type="text" id="s_prefixEst" placeholder="Q"><input type="text" id="s_prefixInv" placeholder="I"><input type="text" id="s_prefixRcp" placeholder="R"></div>
     <label class="f">社判・角印</label>
     <div class="row" style="align-items:center">
       <img id="stampPrev" class="stamp-prev" alt="">
@@ -263,7 +272,7 @@ const DEFAULT_SETTINGS = {
   tel:"080-3909-1914", email:"ryo@arakaki.jp", regno:"",
   stamp: DEFAULT_STAMP,
   bank:"琉球銀行　豊見城支店", bankType:"普通", bankNo:"733526", bankName:"アラカキ リョウ",
-  appTitle:"見積・請求書メーカー", taxRate:"10", estDays:30, invDays:30,
+  appTitle:"見積・請求書メーカー", taxRate:"10", estDays:30, invDays:30, prefixEst:"Q", prefixInv:"I", prefixRcp:"R",
   presets:"ハウスクリーニング,35000\nエアコン内部高圧洗浄,8000\nクロス補修工事,16500\nその他諸経費、産廃処理費用,2000"
 };
 const TYPES = {
@@ -293,17 +302,25 @@ const saveSettings=()=>localStorage.setItem(LS_SET, JSON.stringify(settings));
 /* ============ 書類モデル ============ */
 function newDoc(type="estimate"){
   const date=todayISO();
-  return {id:uid(), type, no:nextNo(date), date, due: type==="receipt"?"":addDays(date, type==="invoice"?+settings.invDays:+settings.estDays),
+  const base=nextBase(date);
+  return {id:uid(), type, base, rev:1, no:makeNo(type,base,1), date, due: type==="receipt"?"":addDays(date, type==="invoice"?+settings.invDays:+settings.estDays),
     client:"", honor:"御中", contact:"", subject:"", items:[blankItem()], taxRate:settings.taxRate, rounding:"floor", memo:"",
     createdAt:Date.now(), updatedAt:Date.now()};
 }
 const blankItem=()=>({date:"",desc:"",qty:1,unit:"",price:""});
-function nextNo(dateISO){ // YYYYMMDD + 連番3桁（同日内）
-  const base=dateISO.replace(/-/g,"");
-  const used=docs.filter(d=>String(d.no).startsWith(base)).map(d=>+String(d.no).slice(8)||0);
+function nextBase(dateISO){ // 案件番号 YYMM-NNN（同月内で連番、見積・請求・領収で共通）
+  const ym=dateISO.slice(2,4)+dateISO.slice(5,7);
+  const used=docs.filter(d=>d.base&&d.base.startsWith(ym+"-")).map(d=>+d.base.split("-")[1]||0);
   const n=used.length?Math.max(...used)+1:1;
-  return base+String(n).padStart(3,"0");
+  return ym+"-"+String(n).padStart(3,"0");
 }
+const PREFIX=t=>({estimate:settings.prefixEst,invoice:settings.prefixInv,receipt:settings.prefixRcp}[t]??"");
+function makeNo(type,base,rev){ return PREFIX(type)+base+(rev>1?"-"+rev:""); }
+function nextRev(type,base,excludeId){ // 同じ案件・同じ種別の最大改訂番号+1
+  const r=docs.filter(d=>d.base===base&&d.type===type&&d.id!==excludeId).map(d=>+d.rev||1);
+  return r.length?Math.max(...r)+1:1;
+}
+function related(d){ return docs.filter(x=>x.base&&x.base===d.base&&x.id!==d.id).sort((a,b)=>a.createdAt-b.createdAt); }
 function calc(d){
   const sub=d.items.reduce((a,i)=>a+(+i.qty||0)*(+i.price||0),0);
   const raw=sub*(+d.taxRate||0)/100;
@@ -321,14 +338,23 @@ function bindEdit(){
   $("#lblNo").textContent=T.noLbl; $("#lblDate").textContent=T.dateLbl;
   $("#dueWrap").style.display=cur.type==="receipt"?"none":"";
   $("#lblDue").textContent=T.dueLbl;
-  $("#no").value=cur.no; $("#date").value=cur.date; $("#due").value=cur.due||"";
+  $("#base").value=cur.base||""; $("#no").value=cur.no; $("#date").value=cur.date; $("#due").value=cur.due||"";
   $("#client").value=cur.client; $("#honor").value=cur.honor; $("#contact").value=cur.contact; $("#subject").value=cur.subject;
   $("#taxRate").value=cur.taxRate; $("#rounding").value=cur.rounding; $("#memo").value=cur.memo||"";
-  $("#btnConvert").style.display=cur.type==="estimate"?"":"none";
-  $("#btnConvert").textContent="請求書に変換";
+  $("#btnConvert").style.display=cur.type==="receipt"?"none":"";
+  $("#btnConvert").textContent=cur.type==="estimate"?"請求書に変換":"領収書に変換";
+  $("#btnRevise").textContent=cur.type==="estimate"?"再見積（改訂版）":"再発行（改訂版）";
+  renderRelated();
   renderItems(); renderTotals();
   const dl=$("#clientList"); dl.innerHTML=[...new Set(docs.map(d=>d.client).filter(Boolean))].map(c=>`<option value="${esc(c)}">`).join("");
 }
+function renderRelated(){
+  let box=$("#relatedBox"); if(!box){ box=document.createElement("p"); box.id="relatedBox"; box.className="hint"; $("#dueWrap").closest(".card").appendChild(box); }
+  const r=related(cur);
+  box.innerHTML=r.length?"同じ案件の書類："+r.map(x=>`<a href="#" data-open="${x.id}" style="color:var(--accent);font-weight:700;margin-right:8px">${esc(x.no)}</a>`).join(""):"";
+  box.querySelectorAll("[data-open]").forEach(a=>a.onclick=e=>{e.preventDefault(); openDoc(a.dataset.open);});
+}
+function openDoc(id){ if(dirty&&!confirm("保存していない変更があります。破棄して開きますか？")) return; cur=JSON.parse(JSON.stringify(docs.find(d=>d.id===id))); dirty=false; bindEdit(); showView("edit"); window.scrollTo(0,0); }
 function renderItems(){
   const host=$("#items"); host.innerHTML="";
   cur.items.forEach((it,i)=>{
@@ -357,16 +383,17 @@ function renderTotals(){
   $("#tTaxLbl").textContent=`消費税（${cur.taxRate}%）`;
 }
 function readEdit(){
-  cur.no=$("#no").value.trim(); cur.date=$("#date").value; cur.due=$("#due").value;
+  cur.base=$("#base").value.trim(); cur.no=$("#no").value.trim(); cur.date=$("#date").value; cur.due=$("#due").value;
   cur.client=$("#client").value.trim(); cur.honor=$("#honor").value; cur.contact=$("#contact").value.trim(); cur.subject=$("#subject").value.trim();
   cur.taxRate=$("#taxRate").value; cur.rounding=$("#rounding").value; cur.memo=$("#memo").value;
 }
-["#no","#date","#due","#client","#honor","#contact","#subject","#taxRate","#rounding","#memo"].forEach(s=>$(s).addEventListener("input",()=>{dirty=true;readEdit();renderTotals();}));
+["#base","#no","#date","#due","#client","#honor","#contact","#subject","#taxRate","#rounding","#memo"].forEach(s=>$(s).addEventListener("input",()=>{dirty=true;readEdit();renderTotals();}));
+$("#base").addEventListener("change",()=>{ readEdit(); cur.rev=nextRev(cur.type,cur.base,cur.id); cur.no=makeNo(cur.type,cur.base,cur.rev); $("#no").value=cur.no; });
 $("#date").addEventListener("change",()=>{ // 日付変更で期限を自動更新（空の場合のみ）
   readEdit(); if(cur.type!=="receipt"&&cur.date) {cur.due=addDays(cur.date,cur.type==="invoice"?+settings.invDays:+settings.estDays); $("#due").value=cur.due;}
 });
 $$("#typeSeg button").forEach(b=>b.onclick=()=>{
-  readEdit(); cur.type=b.dataset.t;
+  readEdit(); cur.type=b.dataset.t; if(cur.base){ cur.rev=nextRev(cur.type,cur.base,cur.id); cur.no=makeNo(cur.type,cur.base,cur.rev); }
   if(cur.type==="receipt") cur.due=""; else if(!cur.due&&cur.date) cur.due=addDays(cur.date,cur.type==="invoice"?+settings.invDays:+settings.estDays);
   dirty=true; bindEdit();
 });
@@ -391,8 +418,9 @@ function saveCur(silent){
 }
 $("#btnSave").onclick=()=>saveCur();
 $("#btnNew").onclick=()=>{ if(dirty&&!confirm("保存していない変更があります。破棄して新規作成しますか？")) return; cur=newDoc(cur.type); dirty=false; bindEdit(); showView("edit"); window.scrollTo(0,0); };
-$("#btnDup").onclick=()=>{ readEdit(); const d=JSON.parse(JSON.stringify(cur)); d.id=uid(); d.date=todayISO(); d.no=nextNo(d.date); d.createdAt=d.updatedAt=Date.now(); if(d.type!=="receipt") d.due=addDays(d.date,d.type==="invoice"?+settings.invDays:+settings.estDays); cur=d; dirty=true; bindEdit(); toast("複製しました（未保存）"); window.scrollTo(0,0); };
-$("#btnConvert").onclick=()=>{ readEdit(); if(!saveCur(true)) return; const d=JSON.parse(JSON.stringify(cur)); d.id=uid(); d.type="invoice"; d.date=todayISO(); d.no=nextNo(d.date); d.due=addDays(d.date,+settings.invDays); d.createdAt=d.updatedAt=Date.now(); d.fromId=cur.id; cur=d; dirty=true; bindEdit(); toast("見積から請求書を作成しました（未保存）"); window.scrollTo(0,0); };
+$("#btnDup").onclick=()=>{ readEdit(); const d=JSON.parse(JSON.stringify(cur)); d.id=uid(); d.date=todayISO(); d.base=nextBase(d.date); d.rev=1; d.no=makeNo(d.type,d.base,1); delete d.fromId; d.createdAt=d.updatedAt=Date.now(); if(d.type!=="receipt") d.due=addDays(d.date,d.type==="invoice"?+settings.invDays:+settings.estDays); cur=d; dirty=true; bindEdit(); toast("複製しました（未保存）"); window.scrollTo(0,0); };
+$("#btnConvert").onclick=()=>{ readEdit(); if(!saveCur(true)) return; const d=JSON.parse(JSON.stringify(cur)); const to=cur.type==="estimate"?"invoice":"receipt"; d.id=uid(); d.type=to; d.date=todayISO(); d.rev=nextRev(to,d.base); d.no=makeNo(to,d.base,d.rev); d.due=to==="invoice"?addDays(d.date,+settings.invDays):""; d.createdAt=d.updatedAt=Date.now(); d.fromId=cur.id; cur=d; dirty=true; bindEdit(); toast((to==="invoice"?"請求書":"領収書")+"を作成しました（未保存）"); window.scrollTo(0,0); };
+$("#btnRevise").onclick=()=>{ readEdit(); if(!saveCur(true)) return; const d=JSON.parse(JSON.stringify(cur)); d.id=uid(); d.date=todayISO(); d.rev=nextRev(d.type,d.base); d.no=makeNo(d.type,d.base,d.rev); if(d.type!=="receipt") d.due=addDays(d.date,d.type==="invoice"?+settings.invDays:+settings.estDays); d.createdAt=d.updatedAt=Date.now(); d.fromId=cur.id; cur=d; dirty=true; bindEdit(); toast("改訂版 "+d.no+" を作成しました（未保存）"); window.scrollTo(0,0); };
 $("#btnDelete").onclick=()=>{ if(!confirm("この書類を削除しますか？")) return; docs=docs.filter(d=>d.id!==cur.id); saveDocs(); cur=newDoc(cur.type); dirty=false; bindEdit(); toast("削除しました"); };
 
 /* ============ 帳票レンダリング（元Excelの座標をそのまま再現） ============ */
@@ -405,7 +433,7 @@ function renderSheet(d){
   // タイトル
   s+=`<div class="a title">${T.title}</div>`;
   // 宛先
-  s+=A(41,89,esc(d.client),"","","font-size:13.44px");
+  s+=A(19.3,89,esc(d.client),"c",208.3,"font-size:13.44px");
   s+=A(229,90,esc(d.honor),"","","font-size:11.76px");
   s+=H(19.3,227.6,107.5);
   s+=A(58,114,"ご担当："); s+=A(98,114,esc(d.contact),"",100); s+=A(201,115,"様");
@@ -443,7 +471,7 @@ function renderSheet(d){
     const y=309.5+15.13*i, amt=(+it.qty||0)*(+it.price||0);
     if(it.date) s+=A(21,y,fmtDate(it.date).slice(5),"c",33);
     s+=A(58,y,esc(it.desc),"",225);
-    s+=A(297,y,(it.qty!==""&&it.qty!=null?esc(it.qty):"")+(it.unit?" "+esc(it.unit):""));
+    if(it.desc||it.price!=="") s+=A(297,y,(it.qty!==""&&it.qty!=null?esc(it.qty):"")+(it.unit?" "+esc(it.unit):""));
     if(it.price!=="") s+=A(343,y,num(+it.price),"r",83);
     if(it.desc||it.price!=="") s+=A(429,y,yen(amt),"r",57);
   });
@@ -462,10 +490,11 @@ function renderSheet(d){
 }
 function showPreview(){
   readEdit();
-  const sc=$("#pvScale"); sc.innerHTML=renderSheet(cur);
-  const w=$("#pvWrap").clientWidth-20, k=w/595;
-  sc.style.transform=`scale(${k})`; sc.style.width="595px"; $("#pvWrap").style.height=(842*k+20)+"px";
   showView("preview");
+  const sc=$("#pvScale"); sc.innerHTML=renderSheet(cur);
+  const w=Math.max(200,$("#pvWrap").clientWidth-20), k=w/595;
+  sc.style.transform=`scale(${k})`; sc.style.width="595px"; $("#pvWrap").style.height=(842*k+20)+"px";
+  window.scrollTo(0,0);
 }
 $("#btnPreview").onclick=showPreview;
 $("#btnBack").onclick=()=>showView("edit");
@@ -505,19 +534,19 @@ $$("#filterSeg button").forEach(b=>b.onclick=()=>{ $$("#filterSeg button").forEa
 $("#q").addEventListener("input",renderList);
 function renderList(){
   const q=$("#q").value.trim().toLowerCase();
-  const list=docs.filter(d=>(filter==="all"||d.type===filter)&&(!q||[d.client,d.subject,d.no].join(" ").toLowerCase().includes(q)))
+  const list=docs.filter(d=>(filter==="all"||d.type===filter)&&(!q||[d.client,d.subject,d.no,d.base].join(" ").toLowerCase().includes(q)))
     .sort((a,b)=>b.updatedAt-a.updatedAt);
   const host=$("#docList");
   if(!list.length){host.innerHTML=`<p class="muted" style="text-align:center;padding:24px 0">書類はまだありません</p>`;return;}
   host.innerHTML=list.map(d=>{const c=calc(d);const T=TYPES[d.type];return `<div class="doc" data-id="${d.id}">
     <span class="pill ${d.type==="invoice"?"inv":d.type==="receipt"?"rcp":""}">${T.pill}</span>
-    <div class="body"><div class="t">${esc(d.client||"（宛名なし）")}</div><div class="s">${esc(d.subject)}　${fmtDate(d.date)}　No.${esc(d.no)}</div></div>
+    <div class="body"><div class="t">${esc(d.client||"（宛名なし）")}</div><div class="s">${esc(d.no)}　${esc(d.subject)}　${fmtDate(d.date)}</div></div>
     <div class="m">${yen(c.total)}</div></div>`;}).join("");
-  host.querySelectorAll(".doc").forEach(el=>el.onclick=()=>{ if(dirty&&!confirm("保存していない変更があります。破棄して開きますか？")) return; cur=JSON.parse(JSON.stringify(docs.find(d=>d.id===el.dataset.id))); dirty=false; bindEdit(); showView("edit"); window.scrollTo(0,0); });
+  host.querySelectorAll(".doc").forEach(el=>el.onclick=()=>openDoc(el.dataset.id));
 }
 
 /* ============ 設定 ============ */
-const SKEYS=["company","rep","zip","addr1","addr2","tel","email","regno","bank","bankType","bankNo","bankName","appTitle","taxRate","estDays","invDays","presets"];
+const SKEYS=["company","rep","zip","addr1","addr2","tel","email","regno","prefixEst","prefixInv","prefixRcp","bank","bankType","bankNo","bankName","appTitle","taxRate","estDays","invDays","presets"];
 function bindSettings(){ SKEYS.forEach(k=>$("#s_"+k).value=settings[k]??""); $("#stampPrev").src=settings.stamp||""; $("#stampPrev").style.display=settings.stamp?"":"none"; }
 $("#s_stamp").onchange=e=>{ const f=e.target.files[0]; if(!f) return; const r=new FileReader(); r.onload=()=>{ resizeImage(r.result,400).then(u=>{settings.stamp=u; $("#stampPrev").src=u; $("#stampPrev").style.display="";}); }; r.readAsDataURL(f); };
 $("#s_stampClear").onclick=()=>{ settings.stamp=""; $("#stampPrev").style.display="none"; $("#s_stamp").value=""; };
@@ -526,7 +555,7 @@ $("#btnSaveSettings").onclick=()=>{ SKEYS.forEach(k=>settings[k]=$("#s_"+k).valu
 function applyTitle(){ $("#appTitle").textContent=settings.appTitle||"見積・請求書メーカー"; $("#appSub").textContent=settings.company||""; document.title=settings.appTitle||"見積・請求書メーカー"; }
 $("#btnExport").onclick=()=>{ const blob=new Blob([JSON.stringify({version:1,exportedAt:new Date().toISOString(),settings,docs},null,1)],{type:"application/json"}); download(blob,`見積請求バックアップ_${todayISO()}.json`); };
 $("#importFile").onchange=e=>{ const f=e.target.files[0]; if(!f) return; const r=new FileReader(); r.onload=()=>{ try{ const j=JSON.parse(r.result); if(!j.docs) throw 0; const ids=new Set(docs.map(d=>d.id)); let n=0; j.docs.forEach(d=>{ if(!ids.has(d.id)){docs.push(d);n++;} }); saveDocs(); if(j.settings&&confirm("設定も読み込みますか？")){ settings=Object.assign({},DEFAULT_SETTINGS,j.settings); saveSettings(); bindSettings(); applyTitle(); } toast(`${n}件を読み込みました`); renderList(); }catch(err){ alert("読み込めないファイルです"); } e.target.value=""; }; r.readAsText(f); };
-$("#btnExportCsv").onclick=()=>{ const rows=[["種別","No.","日付","期限","宛名","件名","小計","消費税","合計","明細"]]; docs.forEach(d=>{const c=calc(d); rows.push([TYPES[d.type].pill,d.no,fmtDate(d.date),fmtDate(d.due),d.client,d.subject,c.sub,c.tax,c.total,d.items.map(i=>`${i.desc}×${i.qty}@${i.price}`).join(" / ")]);}); const csv="﻿"+rows.map(r=>r.map(v=>`"${String(v??"").replace(/"/g,'""')}"`).join(",")).join("\r\n"); download(new Blob([csv],{type:"text/csv"}),`書類一覧_${todayISO()}.csv`); };
+$("#btnExportCsv").onclick=()=>{ const rows=[["種別","案件番号","No.","日付","期限","宛名","件名","小計","消費税","合計","明細"]]; docs.forEach(d=>{const c=calc(d); rows.push([TYPES[d.type].pill,d.base||"",d.no,fmtDate(d.date),fmtDate(d.due),d.client,d.subject,c.sub,c.tax,c.total,d.items.map(i=>`${i.desc}×${i.qty}@${i.price}`).join(" / ")]);}); const csv="﻿"+rows.map(r=>r.map(v=>`"${String(v??"").replace(/"/g,'""')}"`).join(",")).join("\r\n"); download(new Blob([csv],{type:"text/csv"}),`書類一覧_${todayISO()}.csv`); };
 
 /* ============ 画面切替 ============ */
 function showView(v){ $$(".view").forEach(x=>x.classList.toggle("active",x.id==="view-"+v)); $$("nav.tabs button").forEach(b=>b.classList.toggle("on",b.dataset.v===(v==="preview"?"edit":v))); if(v==="list") renderList(); if(v==="settings") bindSettings(); }
