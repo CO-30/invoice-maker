@@ -72,6 +72,11 @@ nav.tabs button.on{color:var(--accent);font-weight:700}
 /* preview */
 .pv-wrap{background:#9aa0a6;border-radius:var(--radius);padding:10px;overflow:hidden}
 .pv-scale{transform-origin:top left}
+.modal{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:40;display:none;align-items:flex-end;justify-content:center}
+.modal.show{display:flex}
+.modal .sheet{background:#fff;width:100%;max-width:720px;border-radius:16px 16px 0 0;padding:14px 14px calc(14px + env(safe-area-inset-bottom));max-height:85vh;overflow:auto}
+.modal h3{margin:0 0 8px;font-size:15px}
+.modal textarea{min-height:220px;font-size:15px;line-height:1.5}
 .toast{position:fixed;left:50%;bottom:90px;transform:translateX(-50%);background:#111;color:#fff;padding:10px 16px;border-radius:999px;font-size:13px;opacity:0;transition:.2s;pointer-events:none;z-index:50;white-space:nowrap}
 .toast.show{opacity:1}
 .stamp-prev{width:64px;height:64px;object-fit:contain;border:1px dashed var(--line);border-radius:8px;background:#fff}
@@ -171,6 +176,10 @@ details.help summary{font-size:13px;color:var(--accent);font-weight:700;cursor:p
       <button class="btn" id="btnPdf" style="background:#b91c1c">PDFを作成して共有</button>
     </div>
     <div class="btnrow">
+      <button class="btn secondary" id="btnMsgLine" style="border-color:#06c755;color:#06c755">LINE用の文面</button>
+      <button class="btn secondary" id="btnMsgMail">メール用の文面</button>
+    </div>
+    <div class="btnrow">
       <button class="btn ghost" id="btnConvert">請求書に変換</button>
       <button class="btn ghost" id="btnRevise">再発行（改訂版）</button>
     </div>
@@ -178,7 +187,7 @@ details.help summary{font-size:13px;color:var(--accent);font-weight:700;cursor:p
       <button class="btn ghost" id="btnDup">複製（別案件）</button>
       <button class="btn danger" id="btnDelete">削除</button>
     </div>
-    <p class="hint">「PDFを作成して共有」を押すと、iPhoneでは共有シートが開き、そのままLINE・メール・ファイルに保存ができます。</p>
+    <p class="hint">「PDFを作成して共有」を押すと、iPhoneでは共有シートが開き、そのままLINE・メール・ファイルに保存ができます。文面は先にコピーしておき、LINEやメールの本文に貼り付けてからPDFを添付すると早いです。</p>
   </div>
 </section>
 
@@ -246,6 +255,11 @@ details.help summary{font-size:13px;color:var(--accent);font-weight:700;cursor:p
     <label class="f">既定の税率</label><select id="s_taxRate"><option value="10">10%</option><option value="8">8%</option><option value="0">非課税</option></select>
     <label class="f">見積書の有効期限（日数）</label><input type="number" id="s_estDays" value="30">
     <label class="f">請求書の支払期限（日数）</label><input type="number" id="s_invDays" value="30">
+    <label class="f">LINE用の文面（見積／請求／領収）</label>
+    <textarea id="s_lineEst"></textarea><textarea id="s_lineInv"></textarea><textarea id="s_lineRcp"></textarea>
+    <label class="f">メール用の文面（1行目が件名。見積／請求／領収）</label>
+    <textarea id="s_mailEst"></textarea><textarea id="s_mailInv"></textarea><textarea id="s_mailRcp"></textarea>
+    <p class="hint">使える差し込み：{宛名} {敬称} {件名} {金額} {No} {日付} {期限} {会社名} {代表} {電話} {振込先}</p>
     <label class="f">定型の明細（1行1件。「摘要,単価」）</label>
     <textarea id="s_presets" placeholder="ハウスクリーニング,35000&#10;エアコン内部高圧洗浄,8000"></textarea>
     <button class="btn" id="btnSaveSettings" style="margin-top:12px">設定を保存</button>
@@ -260,6 +274,12 @@ details.help summary{font-size:13px;color:var(--accent);font-weight:700;cursor:p
 </section>
 
 <div id="printhost" style="display:none"></div>
+<div class="modal" id="msgModal"><div class="sheet">
+  <h3 id="msgTitle">送付文</h3>
+  <textarea id="msgText"></textarea>
+  <div class="btnrow"><button class="btn" id="msgCopy">コピー</button><button class="btn secondary" id="msgOpen">メールを開く</button></div>
+  <div class="btnrow"><button class="btn ghost" id="msgClose">閉じる</button></div>
+</div></div>
 </main>
 
 <nav class="tabs">
@@ -278,7 +298,13 @@ const DEFAULT_SETTINGS = {
   stamp: DEFAULT_STAMP,
   bank:"琉球銀行　豊見城支店", bankType:"普通", bankNo:"733526", bankName:"アラカキ リョウ",
   appTitle:"見積・請求書メーカー", taxRate:"10", estDays:30, invDays:30, prefixEst:"Q", prefixInv:"I", prefixRcp:"R",
-  presets:"ハウスクリーニング,35000\nエアコン内部高圧洗浄,8000\nクロス補修工事,16500\nその他諸経費、産廃処理費用,2000"
+  presets:"ハウスクリーニング,35000\nエアコン内部高圧洗浄,8000\nクロス補修工事,16500\nその他諸経費、産廃処理費用,2000",
+  lineEst:"{宛名}{敬称}\nお世話になっております。{会社名}の{代表}です。\n{件名}のお見積書をお送りします。\n\n合計：{金額}（税込）\n有効期限：{期限}\n\nご不明な点があればお気軽にご連絡ください。\nよろしくお願いいたします。",
+  lineInv:"{宛名}{敬称}\nお世話になっております。{会社名}の{代表}です。\n{件名}の請求書をお送りします。\n\nご請求額：{金額}（税込）\nお支払期限：{期限}\n\n{振込先}\n\nご確認のほどよろしくお願いいたします。",
+  lineRcp:"{宛名}{敬称}\nお世話になっております。{会社名}の{代表}です。\n{件名}の領収書をお送りします。\n\n領収額：{金額}（税込）\n\nこのたびはありがとうございました。今後ともよろしくお願いいたします。",
+  mailEst:"【お見積書】{件名}（{会社名}）\n{宛名} {敬称}\n\nいつもお世話になっております。\n{会社名}の{代表}です。\n\n{件名}のお見積書を添付にてお送りいたします。\n\n　見積No.：{No}\n　合計金額：{金額}（税込）\n　有効期限：{期限}\n\nご検討のほど、よろしくお願いいたします。\n\n{会社名}　{代表}\nTEL：{電話}",
+  mailInv:"【ご請求書】{件名}（{会社名}）\n{宛名} {敬称}\n\nいつもお世話になっております。\n{会社名}の{代表}です。\n\n{件名}のご請求書を添付にてお送りいたします。\n\n　請求No.：{No}\n　ご請求額：{金額}（税込）\n　お支払期限：{期限}\n\n{振込先}\n\nご確認のほど、よろしくお願いいたします。\n\n{会社名}　{代表}\nTEL：{電話}",
+  mailRcp:"【領収書】{件名}（{会社名}）\n{宛名} {敬称}\n\nいつもお世話になっております。\n{会社名}の{代表}です。\n\n{件名}の領収書を添付にてお送りいたします。\n\n　領収No.：{No}\n　領収額：{金額}（税込）\n\nこのたびはご利用いただきありがとうございました。\n今後ともよろしくお願いいたします。\n\n{会社名}　{代表}\nTEL：{電話}"
 };
 const TYPES = {
   estimate:{title:"見\u2003積\u2003書", noLbl:"見積No.", dateLbl:"見積日", dueLbl:"有効期限", greet:"下記の通り、お見積り申し上げます。", pill:"見積"},
@@ -569,6 +595,28 @@ function download(blob,name){ const a=document.createElement("a"); a.href=URL.cr
 $("#btnPdf").onclick=makePdf; $("#btnPdf2").onclick=makePdf;
 $("#btnPrint").onclick=()=>{ readEdit(); $("#printhost").innerHTML=renderSheet(cur); $("#printhost").style.display="block"; setTimeout(()=>{window.print(); setTimeout(()=>{$("#printhost").style.display="none";},500);},50); };
 
+/* ============ 送付文 ============ */
+function fillTemplate(tpl,d){
+  const c=calc(d), S=settings, T=TYPES[d.type];
+  const bank=[S.bank,S.bankType,S.bankNo,S.bankName].filter(Boolean).join("　");
+  const map={"宛名":d.client,"敬称":d.honor,"件名":d.subject,"金額":yen(c.total),"No":d.no,"日付":fmtDate(d.date),"期限":fmtDate(d.due),"会社名":S.company,"代表":S.rep,"電話":S.tel,"振込先":bank?"【お振込先】\n"+bank:"","種別":T.pill+"書"};
+  return tpl.replace(/\{([^}]+)\}/g,(m,k)=>map[k]??m);
+}
+let msgKind="line";
+function openMsg(kind){
+  readEdit(); msgKind=kind;
+  const key=(kind==="line"?"line":"mail")+{estimate:"Est",invoice:"Inv",receipt:"Rcp"}[cur.type];
+  $("#msgTitle").textContent=(kind==="line"?"LINE用":"メール用")+"の文面（編集できます）";
+  $("#msgText").value=fillTemplate(settings[key]||"",cur);
+  $("#msgOpen").style.display=kind==="mail"?"":"none";
+  $("#msgModal").classList.add("show");
+}
+$("#btnMsgLine").onclick=()=>openMsg("line"); $("#btnMsgMail").onclick=()=>openMsg("mail");
+$("#msgClose").onclick=()=>$("#msgModal").classList.remove("show");
+$("#msgModal").addEventListener("click",e=>{ if(e.target.id==="msgModal") $("#msgModal").classList.remove("show"); });
+$("#msgCopy").onclick=async()=>{ const t=$("#msgText"); let txt=t.value; if(msgKind==="mail") txt=txt.split("\n").slice(1).join("\n"); try{ await navigator.clipboard.writeText(txt); toast(msgKind==="mail"?"本文をコピーしました":"コピーしました"); }catch(e){ t.select(); document.execCommand("copy"); toast("コピーしました"); } };
+$("#msgOpen").onclick=()=>{ const lines=$("#msgText").value.split("\n"); const subj=lines[0], body=lines.slice(1).join("\n"); location.href=`mailto:?subject=${encodeURIComponent(subj)}&body=${encodeURIComponent(body)}`; };
+
 /* ============ 一覧 ============ */
 let filter="all";
 $$("#filterSeg button").forEach(b=>b.onclick=()=>{ $$("#filterSeg button").forEach(x=>x.classList.remove("on")); b.classList.add("on"); filter=b.dataset.f; renderList(); });
@@ -587,7 +635,7 @@ function renderList(){
 }
 
 /* ============ 設定 ============ */
-const SKEYS=["company","rep","zip","addr1","addr2","tel","fax","email","regno","prefixEst","prefixInv","prefixRcp","bank","bankType","bankNo","bankName","appTitle","taxRate","estDays","invDays","presets"];
+const SKEYS=["company","rep","zip","addr1","addr2","tel","fax","email","regno","prefixEst","prefixInv","prefixRcp","bank","bankType","bankNo","bankName","appTitle","taxRate","estDays","invDays","presets","lineEst","lineInv","lineRcp","mailEst","mailInv","mailRcp"];
 function bindSettings(){ SKEYS.forEach(k=>$("#s_"+k).value=settings[k]??""); $("#stampPrev").src=settings.stamp||""; $("#stampPrev").style.display=settings.stamp?"":"none"; }
 $("#s_stamp").onchange=e=>{ const f=e.target.files[0]; if(!f) return; const r=new FileReader(); r.onload=()=>{ resizeImage(r.result,400).then(u=>{settings.stamp=u; $("#stampPrev").src=u; $("#stampPrev").style.display="";}); }; r.readAsDataURL(f); };
 $("#s_stampClear").onclick=()=>{ settings.stamp=""; $("#stampPrev").style.display="none"; $("#s_stamp").value=""; };
