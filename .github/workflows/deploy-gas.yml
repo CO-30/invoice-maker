@@ -16,6 +16,20 @@ jobs:
           node-version: 20
       - name: Install clasp
         run: npm install -g @google/clasp
+      - name: Check secrets
+        env:
+          CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
+          SCRIPT_ID: ${{ secrets.SCRIPT_ID }}
+          DEPLOYMENT_ID: ${{ secrets.DEPLOYMENT_ID }}
+        run: |
+          missing=""
+          [ -z "$CLASPRC_JSON" ] && missing="$missing CLASPRC_JSON"
+          [ -z "$SCRIPT_ID" ] && missing="$missing SCRIPT_ID"
+          [ -z "$DEPLOYMENT_ID" ] && missing="$missing DEPLOYMENT_ID"
+          if [ -n "$missing" ]; then
+            echo "::error::Secrets が未登録です:$missing — 設定手順は gas/README.md を参照（Settings → Secrets and variables → Actions）"
+            exit 1
+          fi
       - name: Write credentials
         run: |
           echo '${{ secrets.CLASPRC_JSON }}' > ~/.clasprc.json
