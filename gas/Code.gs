@@ -108,10 +108,13 @@ function deleteDoc_(id){
   return {id:id, updatedAt:now};
 }
 function calc_(d){
-  const items = d.items||[]; const sub = items.reduce((a,i)=>a+(Number(i.qty)||0)*(Number(i.price)||0),0);
-  const raw = sub*(Number(d.taxRate)||0)/100;
-  const tax = d.rounding==="ceil"?Math.ceil(raw):d.rounding==="round"?Math.round(raw):Math.floor(raw);
-  return {sub:sub,tax:tax,total:sub+tax};
+  // taxIn=true（税込で入力）：明細の合計が税込、消費税は内税として逆算（index.html の calc と同じ）
+  const items = d.items||[]; const amount = items.reduce((a,i)=>a+(Number(i.qty)||0)*(Number(i.price)||0),0);
+  const rate = Number(d.taxRate)||0;
+  const rd = v=>d.rounding==="ceil"?Math.ceil(v):d.rounding==="round"?Math.round(v):Math.floor(v);
+  if(d.taxIn===true){ const tax = rd(amount*rate/(100+rate)); return {sub:amount-tax, tax:tax, total:amount}; }
+  const tax = rd(amount*rate/100);
+  return {sub:amount, tax:tax, total:amount+tax};
 }
 
 function getSettings_(){
