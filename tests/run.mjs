@@ -78,13 +78,31 @@ test("見積書 税込ラベル", ()=>{ const h=renderEstimate({...docBase,type:
 test("見積書 税抜は従来ラベル", ()=>{ const h=renderEstimate({...docBase,type:"estimate"}); eq([/税込\)/.test(h),/内消費税/.test(h)],[false,false]); });
 
 // ===== v1.11.0 売上集計・入金管理 =====
-const R = extractWith(["calc","caseKey","linked","superseded","fyMonths","latestDocs","salesDocs","docStatus","salesStats","receivables","estimateStats"], "");
+const R = extractWith(["calc","caseKey","linked","superseded","fyMonths","latestDocs","salesDocs","docStatus","salesStats","receivables","estimateStats","dupKey","dupGroups"], "");
 const D=(o)=>Object.assign({id:Math.random().toString(36).slice(2),type:"invoice",base:"",rev:1,date:"2026-01-10",due:"",client:"A社",items:[{desc:"清掃",qty:1,price:10000}],taxRate:"10",rounding:"floor",updatedAt:1},o);
 
 test("fyMonths 1月始まり／4月始まり", ()=>{ eq(R.fyMonths(2026,1).slice(0,2),["2026-01","2026-02"]); eq(R.fyMonths(2026,4)[0],"2026-04"); eq(R.fyMonths(2026,4)[11],"2027-03"); eq(R.fyMonths(2026,4).length,12); });
 test("latestDocs 改訂は最新版だけ・削除除外", ()=>{
   const a=D({id:"a",base:"2601-001",rev:1}), b=D({id:"b",base:"2601-001",rev:2}), c=D({id:"c",base:"2601-002",deleted:true}), e=D({id:"e",type:"estimate",base:"2601-001"});
   eq(R.latestDocs([a,b,c,e]).map(d=>d.id).sort(),["b","e"]); });
+test("dupGroups 同じ取引先・同じ月・同じ金額の別案件を検出", ()=>{
+  const a=D({id:"a",base:"2601-001",client:"A社",date:"2026-01-10"}), b=D({id:"b",base:"2601-005",client:" Ａ社 ",date:"2026-01-25"});
+  const c=D({id:"c",base:"2602-001",client:"A社",date:"2026-02-03"}), d=D({id:"d",base:"2601-006",client:"B社",date:"2026-01-12"});
+  const e=D({id:"e",base:"2601-007",client:"A社",date:"2026-01-12",items:[{desc:"清掃",qty:2,price:10000}]});
+  const g=R.dupGroups([a,b,c,d,e]); eq(g.length,1); eq(g[0].ids.slice().sort(),["a","b"]); eq([g[0].month,g[0].total],["2026-01",11000]); });
+test("dupGroups 改訂版・変換した領収書・削除は重複にしない", ()=>{
+  const a=D({id:"a",base:"2601-001",rev:1}), a2=D({id:"a2",base:"2601-001",rev:2}), r=D({id:"r",type:"receipt",base:"2601-001"}), x=D({id:"x",base:"2601-002",deleted:true});
+  eq(R.dupGroups([a,a2,r,x]),[]); });
+test("dupGroups 複製（別案件）の請求書と領収書は検出", ()=>{
+  const i=D({id:"i",base:"2601-001"}), r=D({id:"r",type:"receipt",base:"2601-009"});
+  eq(R.dupGroups([i,r])[0].ids.slice().sort(),["i","r"]); });
+test("dupGroups 「重複ではない」にした組は出さない／新しい書類が増えたら再表示", ()=>{
+  const a=D({id:"a",base:"2601-001",dupOk:true}), b=D({id:"b",base:"2601-002",dupOk:true}), c=D({id:"c",base:"2601-003"});
+  eq(R.dupGroups([a,b]),[]); eq(R.dupGroups([a,b,c])[0].ids.length,3); });
+test("dupGroups 宛名なし・金額0・日付なしは対象外", ()=>{
+  eq(R.dupGroups([D({id:"a",base:"1",client:""}),D({id:"b",base:"2",client:""})]),[]);
+  eq(R.dupGroups([D({id:"a",base:"1",items:[]}),D({id:"b",base:"2",items:[]})]),[]);
+  eq(R.dupGroups([D({id:"a",base:"1",date:""}),D({id:"b",base:"2",date:""})]),[]); });
 test("salesDocs 請求書のある案件の領収書は数えない", ()=>{
   const i=D({id:"i",base:"2601-001"}), r1=D({id:"r1",type:"receipt",base:"2601-001"}), r2=D({id:"r2",type:"receipt",base:"2601-002"}), r3=D({id:"r3",type:"receipt",base:""}), q=D({id:"q",type:"estimate",base:"2601-003"});
   eq(R.salesDocs([i,r1,r2,r3,q]).map(d=>d.id).sort(),["i","r2","r3"]); });
