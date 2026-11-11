@@ -496,6 +496,7 @@ details.help summary{font-size:13px;color:var(--accent);font-weight:700;cursor:p
     <details><summary>社判（角印）の位置を変えたい</summary><p><span class="kbd">プレビュー</span> → <span class="kbd">社判の位置・大きさを調整</span>。置きたい場所をタップすると印が移動し、ドラッグや矢印で細かく合わせられます。大きさは50〜200%。見積書・請求書（明細型領収書）・簡易型領収書でそれぞれ別の位置を覚えます。印は文字の下に押されるので、住所やメールに重なっても文字は隠れません。</p></details>
     <details><summary>更新のお知らせが出た</summary><p>画面上の「更新する」を押すだけです。保存済みのデータは消えません。</p></details>
   </div>
+  <div class="card" id="feedbackCard" style="padding:0;border:0;background:none;box-shadow:none"><div id="feedbackBox"></div></div>
 </section>
 
 <section class="view" id="view-settings">
@@ -832,9 +833,12 @@ function parseSheet_(sh, fileName){
 </nav>
 <div class="toast" id="toast"></div>
 
+<script src="feedback/feedback-widget.js?v=1.14.0"></script>
 <script>
 /* ============ 定数・既定 ============ */
-const APP_VERSION="1.13.0";
+const APP_VERSION="1.14.0";
+// 要望の受付先（共通の要望受付GASのウェブアプリURL …/exec）。空なら送信欄は「未設定」と表示
+const FEEDBACK_URL="";
 const DEFAULT_STAMP = ""; // 社判は利用者が設定で登録する（見本の印は入れない）
 const DEFAULT_SETTINGS = {
   // 見本の発行者情報（設定画面で自分の情報に書き換える）。既存の端末は保存済みの設定が優先されるので影響しない
@@ -1041,7 +1045,7 @@ function renderStatus(){ // 編集画面の入金欄・見積状況・入金確�
 function renderRelated(){
   let box=$("#relatedBox"); if(!box){ box=document.createElement("p"); box.id="relatedBox"; box.className="hint"; $("#dueWrap").closest(".card").appendChild(box); }
   const r=related(cur);
-  box.innerHTML=r.length?"同じ案件の書類："+r.map(x=>`<a href="#" data-open="${x.id}" style="color:var(--accent);font-weight:700;margin-right:8px">${esc(x.no)}</a>`).join(""):"";
+  box.innerHTML=r.length?"同じ案件の書類："+r.map(x=>`<a href="#" data-open="${x.id}" data-fb="同じ案件の書類" style="color:var(--accent);font-weight:700;margin-right:8px">${esc(x.no)}</a>`).join(""):"";
   box.querySelectorAll("[data-open]").forEach(a=>a.onclick=e=>{e.preventDefault(); openDoc(a.dataset.open);});
 }
 function openDoc(id){ if(dirty&&!confirm("保存していない変更があります。破棄して開きますか？")) return; cur=JSON.parse(JSON.stringify(docs.find(d=>d.id===id))); dirty=false; bindEdit(); showView("edit"); window.scrollTo(0,0); }
@@ -1858,11 +1862,21 @@ $("#importFile").onchange=e=>{ const f=e.target.files[0]; if(!f) return; const r
 $("#btnExportCsv").onclick=()=>{ const rows=[["種別","案件番号","No.","日付","期限","宛名","件名","小計","消費税","合計","明細","入金日","状況"]]; const tdy=todayISO(); docs.forEach(d=>{const c=calc(d); const st=docStatus(d,docs,tdy); rows.push([TYPES[d.type].pill,d.base||"",d.no,fmtDate(d.date),fmtDate(d.due),d.client,d.subject,c.sub,c.tax,c.total,d.items.map(i=>`${i.desc}×${i.qty}@${i.price}`).join(" / "),d.type==="invoice"&&d.paid?fmtDate(d.paidAt):"",st?ST_LABEL[st]:""]);}); const csv="﻿"+rows.map(r=>r.map(v=>`"${String(v??"").replace(/"/g,'""')}"`).join(",")).join("\r\n"); download(new Blob([csv],{type:"text/csv"}),`書類一覧_${todayISO()}.csv`); };
 
 /* ============ 画面切替 ============ */
-function showView(v){ if(v!=="preview") stampAdj=false; $$(".view").forEach(x=>x.classList.toggle("active",x.id==="view-"+v)); $$("nav.tabs button").forEach(b=>b.classList.toggle("on",b.dataset.v===(v==="preview"?"edit":v))); if(v==="list") renderList(); if(v==="report") renderReport(); if(v==="settings") bindSettings(); if(v==="edit") updateSampleNote(); }
+function showView(v){ fbLog("画面: "+v); if(v!=="preview") stampAdj=false; $$(".view").forEach(x=>x.classList.toggle("active",x.id==="view-"+v)); $$("nav.tabs button").forEach(b=>b.classList.toggle("on",b.dataset.v===(v==="preview"?"edit":v))); if(v==="list") renderList(); if(v==="report") renderReport(); if(v==="settings") bindSettings(); if(v==="edit") updateSampleNote(); }
 $$("nav.tabs button").forEach(b=>b.onclick=()=>showView(b.dataset.v));
 // 発行者情報が見本のままなら作成画面に案内を出す
 const isSampleIssuer=()=>["company","zip","tel","bankNo","email"].some(k=>DEFAULT_SETTINGS[k]&&settings[k]===DEFAULT_SETTINGS[k]);
 function updateSampleNote(){ $("#sampleNote").style.display=isSampleIssuer()?"":"none"; }
+/* ============ 要望欄（feedback/feedback-widget.js） ============ */
+function fbLog(a){ try{ window.FeedbackWidget&&FeedbackWidget.log(a); }catch(e){} }
+if(window.FeedbackWidget){
+  FeedbackWidget.init({app:"REDSEAL",version:APP_VERSION,endpoint:FEEDBACK_URL,title:"ご要望・不具合の報告",
+    getContext:()=>({同期:syncReady()?"設定済み":"未設定",未送信:queue.length,書類数:docs.length,画面:($(".view.active")||{}).id||""})});
+  FeedbackWidget.render("#feedbackBox");
+  const _alert=window.alert.bind(window);
+    // メッセージは「：」より前だけ記録（後ろにファイル名やサーバーの文言が入ることがあるため）
+  window.alert=m=>{ const t=String(m||"").split("\n")[0].split(/[:：]/)[0].slice(0,40); if(/失敗|できません|読み込めない|見つかりません/.test(t)) FeedbackWidget.logError("表示: "+t); else fbLog("表示: "+t); return _alert(m); };
+}
 $("#btnGoIssuer").onclick=()=>{ showView("settings"); window.scrollTo(0,0); };
 window.addEventListener("beforeunload",e=>{ if(dirty){e.preventDefault();e.returnValue="";} });
 
