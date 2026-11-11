@@ -77,5 +77,62 @@ test("請求書 税抜は従来ラベル", ()=>{ const h=renderSheet(docBase); e
 test("見積書 税込ラベル", ()=>{ const h=renderEstimate({...docBase,type:"estimate",taxIn:true}); eq([/単価\(税込\)/.test(h),/小計\(税抜\)/.test(h),/内消費税/.test(h)],[true,true,true]); });
 test("見積書 税抜は従来ラベル", ()=>{ const h=renderEstimate({...docBase,type:"estimate"}); eq([/税込\)/.test(h),/内消費税/.test(h)],[false,false]); });
 
+// ===== v1.11.0 売上集計・入金管理 =====
+const R = extractWith(["calc","fyMonths","latestDocs","salesDocs","docStatus","salesStats","receivables","estimateStats"], "");
+const D=(o)=>Object.assign({id:Math.random().toString(36).slice(2),type:"invoice",base:"",rev:1,date:"2026-01-10",due:"",client:"A社",items:[{desc:"清掃",qty:1,price:10000}],taxRate:"10",rounding:"floor",updatedAt:1},o);
+
+test("fyMonths 1月始まり／4月始まり", ()=>{ eq(R.fyMonths(2026,1).slice(0,2),["2026-01","2026-02"]); eq(R.fyMonths(2026,4)[0],"2026-04"); eq(R.fyMonths(2026,4)[11],"2027-03"); eq(R.fyMonths(2026,4).length,12); });
+test("latestDocs 改訂は最新版だけ・削除除外", ()=>{
+  const a=D({id:"a",base:"2601-001",rev:1}), b=D({id:"b",base:"2601-001",rev:2}), c=D({id:"c",base:"2601-002",deleted:true}), e=D({id:"e",type:"estimate",base:"2601-001"});
+  eq(R.latestDocs([a,b,c,e]).map(d=>d.id).sort(),["b","e"]); });
+test("salesDocs 請求書のある案件の領収書は数えない", ()=>{
+  const i=D({id:"i",base:"2601-001"}), r1=D({id:"r1",type:"receipt",base:"2601-001"}), r2=D({id:"r2",type:"receipt",base:"2601-002"}), r3=D({id:"r3",type:"receipt",base:""}), q=D({id:"q",type:"estimate",base:"2601-003"});
+  eq(R.salesDocs([i,r1,r2,r3,q]).map(d=>d.id).sort(),["i","r2","r3"]); });
+test("docStatus 請求書", ()=>{ eq(R.docStatus(D({paid:true,due:"2026-01-01"}),[],"2026-02-01"),"paid"); eq(R.docStatus(D({due:"2026-01-31"}),[],"2026-02-01"),"overdue"); eq(R.docStatus(D({due:"2026-02-01"}),[],"2026-02-01"),"unpaid"); eq(R.docStatus(D({due:""}),[],"2026-02-01"),"unpaid"); });
+test("docStatus 見積", ()=>{ const q=D({type:"estimate",base:"2601-001"});
+  eq(R.docStatus(q,[q],"2026-02-01"),"open"); eq(R.docStatus({...q,lost:true},[q],"2026-02-01"),"lost");
+  eq(R.docStatus({...q,lost:true},[q,D({base:"2601-001"})],"2026-02-01"),"won");
+  eq(R.docStatus(q,[q,D({base:"2601-001",deleted:true})],"2026-02-01"),"open"); eq(R.docStatus(D({type:"receipt"}),[],"x"),""); });
+
+const yearDocs=[
+  D({id:"p1",date:"2025-01-05",client:"A社",items:[{desc:"清掃",qty:1,price:10000}]}),            // 前年1月 11,000
+  D({id:"p2",date:"2025-03-20",client:"B社",items:[{desc:"窓",qty:2,price:5000}]}),               // 前年3月 11,000
+  D({id:"c1",date:"2026-01-15",client:"A社",items:[{desc:"清掃",qty:2,price:10000}]}),            // 今年1月 22,000
+  D({id:"c2",date:"2026-01-31",client:"B社",items:[{desc:"清掃",qty:1,price:10000}],taxIn:true}), // 今年1月 10,000（税込入力）
+  D({id:"c3",date:"2026-02-01",client:"A社",base:"2602-001",rev:1,items:[{desc:"窓",qty:1,price:99999}]}), // 改訂前（除外）
+  D({id:"c4",date:"2026-02-03",client:"A社",base:"2602-001",rev:2,items:[{desc:"窓",qty:1,price:30000}]}), // 今年2月 33,000
+  D({id:"q1",type:"estimate",date:"2026-02-01",items:[{desc:"x",qty:1,price:777777}]}),             // 見積は数えない
+];
+test("salesStats 月別・合計・前年比", ()=>{ const s=R.salesStats(yearDocs,{fy:2026,fyStart:1,basis:"total",manual:{},defRate:10,today:"2026-02-15"});
+  eq(s.months.slice(0,3).map(m=>[m.key,m.cur,m.prev,m.count]),[["2026-01",32000,11000,2],["2026-02",33000,0,1],["2026-03",0,11000,0]]);
+  eq([s.total.cur,s.total.prev],[65000,22000]); eq(s.months[1].ratio,null); eq(Math.round(s.months[0].ratio*1000),2909); });
+test("salesStats 累計（今月まで）", ()=>{ const s=R.salesStats(yearDocs,{fy:2026,fyStart:1,basis:"total",manual:{},defRate:10,today:"2026-02-15"});
+  eq([s.ytd.months,s.ytd.cur,s.ytd.prev],[2,65000,11000]);
+  eq(R.salesStats(yearDocs,{fy:2025,fyStart:1,today:"2026-02-15"}).ytd.months,12); eq(R.salesStats(yearDocs,{fy:2027,fyStart:1,today:"2026-02-15"}).ytd.months,0); });
+test("salesStats 税抜", ()=>{ const s=R.salesStats(yearDocs,{fy:2026,fyStart:1,basis:"sub",manual:{},defRate:10,today:"2026-02-15"});
+  eq([s.months[0].cur,s.months[0].prev],[29091,10000]); }); // 20000+9091
+test("salesStats 手入力の過去売上（税込で保存、税抜は換算）", ()=>{
+  const m={"2025-02":55000,"2026-01":1100};
+  const s=R.salesStats(yearDocs,{fy:2026,fyStart:1,basis:"total",manual:m,defRate:10,today:"2026-02-15"});
+  eq([s.months[0].cur,s.months[1].prev,s.total.prev],[33100,55000,77000]);
+  const t=R.salesStats(yearDocs,{fy:2026,fyStart:1,basis:"sub",manual:m,defRate:10,today:"2026-02-15"});
+  eq([t.months[1].prev,t.months[0].cur],[50000,30091]); });
+test("salesStats 4月始まりの年度", ()=>{ const s=R.salesStats(yearDocs,{fy:2025,fyStart:4,basis:"total",manual:{},defRate:10,today:"2026-02-15"});
+  eq([s.months[0].key,s.total.cur,s.total.prev],["2025-04",65000,22000]); eq(s.ytd.months,11); });
+test("salesStats 取引先・品目ランキングと目標", ()=>{ const s=R.salesStats(yearDocs,{fy:2026,fyStart:1,basis:"total",manual:{},defRate:10,today:"2026-02-15",goal:130000});
+  eq(s.clients,[{name:"A社",amt:55000,count:2},{name:"B社",amt:10000,count:1}]);
+  eq(s.items,[{name:"窓",amt:30000,qty:1},{name:"清掃",amt:30000,qty:3}].sort((a,b)=>b.amt-a.amt||a.name.localeCompare(b.name)));
+  eq([s.goal.target,s.goal.ratio],[130000,0.5]); eq(R.salesStats(yearDocs,{fy:2026,today:"2026-02-15"}).goal.ratio,null); });
+test("salesStats 日付のない書類は無視", ()=>{ const s=R.salesStats([D({date:""})],{fy:2026,today:"2026-02-15"}); eq(s.total.cur,0); });
+test("receivables 未入金・期限超過", ()=>{
+  const ds=[D({id:"u1",due:"2026-01-31",no:"I1"}),D({id:"u2",due:"2026-03-01",no:"I2",items:[{qty:1,price:20000}]}),D({id:"pd",paid:true,paidAt:"2026-01-20"}),D({id:"old",base:"2601-009",rev:1}),D({id:"new",base:"2601-009",rev:2,paid:true})];
+  const r=R.receivables(ds,"2026-02-01");
+  eq([r.count,r.amount,r.overdueCount,r.overdueAmount],[2,33000,1,11000]); eq(r.list.map(x=>x.id),["u1","u2"]); });
+test("estimateStats 受注率", ()=>{
+  const ds=[D({type:"estimate",base:"2601-001",date:"2026-01-05"}),D({base:"2601-001",date:"2026-01-20"}),
+    D({type:"estimate",base:"2601-002",date:"2026-01-06",lost:true}),D({type:"estimate",base:"2601-003",date:"2026-02-06"}),
+    D({type:"estimate",base:"2601-003",rev:2,date:"2026-02-07"}),D({type:"estimate",base:"2501-001",date:"2025-02-07"})];
+  eq(R.estimateStats(ds,2026,1),{count:3,won:1,lost:1,open:1,rate:1/3}); eq(R.estimateStats([],2026,1).rate,null); });
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed?1:0);
