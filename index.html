@@ -70,7 +70,7 @@ textarea{min-height:64px;resize:vertical}
 /* 札（状況） */
 .st{display:inline-block;font-size:10.5px;padding:1px 7px;border-radius:999px;font-weight:700;margin-left:6px;vertical-align:1px;border:1px solid currentColor;background:#fff}
 .st.unpaid{color:#92400e}.st.overdue{color:#fff;background:#b91c1c;border-color:#b91c1c}.st.paid{color:#2e7d32}
-.st.won{color:#2e7d32}.st.lost{color:#6b7280}.st.open{color:#1f6f8b}
+.st.won{color:#2e7d32}.st.lost,.st.old{color:#6b7280}.st.open{color:#1f6f8b}
 .paybox{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:10px;padding:10px;border:1px solid var(--line);border-radius:10px;background:#fafafa}
 .paybox label.ck{display:flex;align-items:center;gap:6px;font-size:15px;font-weight:700}
 .paybox input[type=checkbox]{width:22px;height:22px;accent-color:var(--accent)}
@@ -834,8 +834,8 @@ const DEFAULT_SETTINGS = {
   mailEst:"【お見積書】{件名}（{会社名}）\n{宛名} {敬称}\n\nいつもお世話になっております。\n{会社名}の{代表}です。\n\n{件名}のお見積書を添付にてお送りいたします。\n\n　見積No.：{No}\n　合計金額：{金額}（税込）\n　有効期限：{期限}\n\nご検討のほど、よろしくお願いいたします。\n\n{会社名}　{代表}\nTEL：{電話}",
   mailInv:"【ご請求書】{件名}（{会社名}）\n{宛名} {敬称}\n\nいつもお世話になっております。\n{会社名}の{代表}です。\n\n{件名}のご請求書を添付にてお送りいたします。\n\n　請求No.：{No}\n　ご請求額：{金額}（税込）\n　お支払期限：{期限}\n\n{振込先}\n\nご確認のほど、よろしくお願いいたします。\n\n{会社名}　{代表}\nTEL：{電話}",
   fyStart:"1", salesGoal:"",
-  lineRem:"{宛名}{敬称}\nお世話になっております。{会社名}の{代表}です。\n{日付}にお送りした{件名}のご請求（{金額}）について、お支払期限の{期限}を過ぎておりましたのでご連絡いたしました。\n\n{振込先}\n\n行き違いでお支払い済みの場合はご容赦ください。\nご確認のほどよろしくお願いいたします。",
-  mailRem:"【お支払いのご確認】{件名}（{会社名}）\n{宛名} {敬称}\n\nいつもお世話になっております。\n{会社名}の{代表}です。\n\n下記のご請求につきまして、お支払期限を過ぎておりましたのでご確認をお願いいたします。\n\n　請求No.：{No}\n　請求日：{日付}\n　ご請求額：{金額}（税込）\n　お支払期限：{期限}\n\n{振込先}\n\n行き違いでお支払い済みの場合は、ご容赦ください。\n何卒よろしくお願いいたします。\n\n{会社名}　{代表}\nTEL：{電話}",
+  lineRem:"{宛名}{敬称}\nお世話になっております。{会社名}の{代表}です。\n{日付}にお送りした{件名}のご請求（{金額}）につきまして、ご入金の確認がまだ取れておりませんでしたのでご連絡いたしました。\n\n{振込先}\n\n行き違いでお支払い済みの場合はご容赦ください。\nご確認のほどよろしくお願いいたします。",
+  mailRem:"【お支払いのご確認】{件名}（{会社名}）\n{宛名} {敬称}\n\nいつもお世話になっております。\n{会社名}の{代表}です。\n\n下記のご請求につきまして、ご入金の確認がまだ取れておりませんでしたので、ご確認をお願いいたします。\n\n　請求No.：{No}\n　請求日：{日付}\n　ご請求額：{金額}（税込）\n　お支払期限：{期限}\n\n{振込先}\n\n行き違いでお支払い済みの場合は、ご容赦ください。\n何卒よろしくお願いいたします。\n\n{会社名}　{代表}\nTEL：{電話}",
   mailRcp:"【領収書】{件名}（{会社名}）\n{宛名} {敬称}\n\nいつもお世話になっております。\n{会社名}の{代表}です。\n\n{件名}の領収書を添付にてお送りいたします。\n\n　領収No.：{No}\n　領収額：{金額}（税込）\n\nこのたびはご利用いただきありがとうございました。\n今後ともよろしくお願いいたします。\n\n{会社名}　{代表}\nTEL：{電話}"
 };
 const TYPES = {
@@ -900,28 +900,40 @@ function fyMonths(fy,fyStart){ // 年度の12か月 ["YYYY-MM",…]
   for(let i=0;i<12;i++){ const m=st+i, y=fy+Math.floor(m/12); out.push(y+"-"+String(m%12+1).padStart(2,"0")); }
   return out;
 }
+function caseKey(d){ // 案件のまとまり。Googleドライブ取り込み（id が imp_）は No. から作った仮の案件番号なので使わない
+  return d&&d.base&&!String(d.id||"").startsWith("imp_")?d.base:"";
+}
+function linked(a,b){ // b が a と同じ案件、または a から変換・改訂して作られた
+  return !!(a&&b&&a.id!==b.id&&((caseKey(a)&&caseKey(a)===caseKey(b))||b.fromId===a.id));
+}
+function superseded(d,docs){ // 同じ案件・同じ種別に、より新しい改訂版がある
+  const k=caseKey(d);
+  return !!k&&docs.some(x=>x&&!x.deleted&&x.id!==d.id&&x.type===d.type&&caseKey(x)===k&&(+x.rev||1)>(+d.rev||1));
+}
 function latestDocs(docs){ // 削除を除き、同じ案件・同じ種別は改訂番号が最大の1件だけ
   const best=new Map();
   for(const d of docs){
     if(!d||d.deleted) continue;
-    const k=d.base?d.type+"|"+d.base:"id|"+d.id;
+    const k=caseKey(d)?d.type+"|"+caseKey(d):"id|"+d.id;
     const b=best.get(k);
     if(!b||(+d.rev||1)>(+b.rev||1)||((+d.rev||1)===(+b.rev||1)&&(+d.updatedAt||0)>(+b.updatedAt||0))) best.set(k,d);
   }
   return [...best.values()];
 }
-function salesDocs(docs){ // 売上の対象：請求書＋（同じ案件に請求書が無い）領収書
-  const L=latestDocs(docs);
-  const inv=new Set(L.filter(d=>d.type==="invoice"&&d.base).map(d=>d.base));
-  return L.filter(d=>d.type==="invoice"||(d.type==="receipt"&&!(d.base&&inv.has(d.base))));
+function salesDocs(docs){ // 売上の対象：請求書＋（対応する請求書が無い）領収書
+  const inv=docs.filter(x=>x&&!x.deleted&&x.type==="invoice");
+  return latestDocs(docs).filter(d=>d.type==="invoice"||(d.type==="receipt"&&!inv.some(i=>linked(i,d)||linked(d,i))));
 }
-function docStatus(d,docs,today){ // invoice: paid/overdue/unpaid　estimate: won/lost/open
-  if(d.type==="invoice") return d.paid?"paid":(d.due&&d.due<today?"overdue":"unpaid");
-  if(d.type==="estimate"){
-    if(d.base&&docs.some(x=>x&&!x.deleted&&x.base===d.base&&(x.type==="invoice"||x.type==="receipt"))) return "won";
-    return d.lost?"lost":"open";
+function docStatus(d,docs,today){ // invoice: paid/overdue/unpaid/old　estimate: won/lost/open/old
+  if(d.type!=="invoice"&&d.type!=="estimate") return "";
+  if(superseded(d,docs)) return "old";
+  const has=t=>docs.some(x=>x&&!x.deleted&&t.includes(x.type)&&linked(d,x));
+  if(d.type==="invoice"){
+    if(d.paid||has(["receipt"])) return "paid";
+    return d.due&&d.due<today?"overdue":"unpaid";
   }
-  return "";
+  if(has(["invoice","receipt"])) return "won";
+  return d.lost?"lost":"open";
 }
 function salesStats(docs,opt){
   const o=Object.assign({fyStart:1,basis:"total",manual:{},defRate:10,today:"",goal:0},opt||{});
@@ -949,7 +961,8 @@ function salesStats(docs,opt){
     goal:{target,ratio:target>0?tc/target:null},clients:top(cl),items:top(it)};
 }
 function receivables(docs,today){ // 未入金の請求書（全期間）
-  const list=salesDocs(docs).filter(d=>d.type==="invoice"&&!d.paid).map(d=>({id:d.id,no:d.no,client:d.client,subject:d.subject,due:d.due||"",total:calc(d).total,overdue:!!(d.due&&d.due<today)}))
+  const list=salesDocs(docs).map(d=>[d,docStatus(d,docs,today)]).filter(([d,st])=>d.type==="invoice"&&(st==="unpaid"||st==="overdue"))
+    .map(([d,st])=>({id:d.id,no:d.no,client:d.client,subject:d.subject,due:d.due||"",total:calc(d).total,overdue:st==="overdue"}))
     .sort((a,b)=>(a.due||"9999").localeCompare(b.due||"9999"));
   const od=list.filter(x=>x.overdue);
   return {count:list.length,amount:list.reduce((t,x)=>t+x.total,0),overdueCount:od.length,overdueAmount:od.reduce((t,x)=>t+x.total,0),list};
@@ -987,7 +1000,7 @@ function bindEdit(){
   renderItems(); renderTotals();
   const dl=$("#clientList"); dl.innerHTML=[...new Set(docs.map(d=>d.client).filter(Boolean))].map(c=>`<option value="${esc(c)}">`).join("");
 }
-const ST_LABEL={paid:"入金済",unpaid:"未入金",overdue:"期限超過",won:"受注",lost:"失注",open:"検討中"};
+const ST_LABEL={old:"旧版",paid:"入金済",unpaid:"未入金",overdue:"期限超過",won:"受注",lost:"失注",open:"検討中"};
 function renderStatus(){ // 編集画面の入金欄・見積状況・入金確認ボタン
   const inv=cur.type==="invoice", est=cur.type==="estimate";
   $("#payWrap").style.display=inv?"":"none"; $("#estWrap").style.display=est?"":"none";
@@ -995,7 +1008,7 @@ function renderStatus(){ // 編集画面の入金欄・見積状況・入金確�
   const st=docStatus(cur,docs.filter(d=>d.id!==cur.id),todayISO());
   if(inv){ $("#payState").className="st "+st; $("#payState").textContent=ST_LABEL[st]; }
   if(est){ $("#estState").className="st "+st; $("#estState").textContent=ST_LABEL[st]; }
-  $("#remRow").style.display=inv&&!cur.paid?"":"none";
+  $("#remRow").style.display=inv&&(st==="unpaid"||st==="overdue")?"":"none";
 }
 function renderRelated(){
   let box=$("#relatedBox"); if(!box){ box=document.createElement("p"); box.id="relatedBox"; box.className="hint"; $("#dueWrap").closest(".card").appendChild(box); }
@@ -1713,10 +1726,10 @@ function renderReport(){
   drawChart(s);
   const nowKey=today.slice(0,7);
   $("#rpTable").innerHTML=`<thead><tr><th>月</th><th>今年</th><th>前年</th><th>前年比</th><th>件数</th></tr></thead><tbody>`+
-    s.months.map(m=>`<tr class="${m.key===nowKey?"now":""}"><td>${m.key.slice(0,4)}/${m.label}${m.manual||m.prevManual?' <span class="muted">※</span>':""}</td><td>${num(m.cur)}</td><td>${num(m.prev)}</td><td>${pct(m.ratio)}</td><td>${m.count}</td></tr>`).join("")+
+    s.months.map(m=>`<tr class="${m.key===nowKey?"now":""}"><td>${esc(m.key.slice(0,4))}/${m.label}${m.manual||m.prevManual?' <span class="muted">※</span>':""}</td><td>${num(m.cur)}</td><td>${num(m.prev)}</td><td>${pct(m.ratio)}</td><td>${m.count}</td></tr>`).join("")+
     `</tbody><tfoot><tr><td>合計</td><td>${num(s.total.cur)}</td><td>${num(s.total.prev)}</td><td>${pct(s.total.ratio)}</td><td>${s.months.reduce((t,m)=>t+m.count,0)}</td></tr></tfoot>`+
     (s.months.some(m=>m.manual||m.prevManual)?`<caption style="caption-side:bottom;text-align:left" class="muted">※ 手入力の売上を含む月</caption>`:"");
-  $("#rpRecv").innerHTML=rv.list.length?rv.list.map(x=>`<div class="rk" data-id="${x.id}" style="cursor:pointer"><div class="t">${esc(x.client||"（宛名なし）")}<div class="muted">${esc(x.no||"")}　期限 ${x.due?fmtDate(x.due):"なし"}</div></div><span class="st ${x.overdue?"overdue":"unpaid"}">${x.overdue?"期限超過":"未入金"}</span><div class="a">${yen(x.total)}</div></div>`).join(""):`<p class="muted">未入金の請求書はありません</p>`;
+  $("#rpRecv").innerHTML=rv.list.length?rv.list.map(x=>`<div class="rk" data-id="${x.id}" style="cursor:pointer"><div class="t">${esc(x.client||"（宛名なし）")}<div class="muted">${esc(x.no||"")}　期限 ${x.due?esc(fmtDate(x.due)):"なし"}</div></div><span class="st ${x.overdue?"overdue":"unpaid"}">${x.overdue?"期限超過":"未入金"}</span><div class="a">${yen(x.total)}</div></div>`).join(""):`<p class="muted">未入金の請求書はありません</p>`;
   $("#rpRecv").querySelectorAll(".rk").forEach(el=>el.onclick=()=>openDoc(el.dataset.id));
   const rank=(a,f)=>a.length?a.map((x,i)=>`<div class="rk"><span class="n">${i+1}</span><span class="t">${esc(x.name)}</span><span class="muted">${f(x)}</span><span class="a">${yen(x.amt)}</span></div>`).join(""):`<p class="muted">この年度の売上はまだありません</p>`;
   $("#rpClients").innerHTML=rank(s.clients,x=>x.count+"件");
@@ -1725,7 +1738,7 @@ function renderReport(){
 }
 function drawChart(s){
   const W=340,H=176,L=34,R=4,T=8,B=20, pw=W-L-R, ph=H-T-B, gw=pw/12, bw=Math.min(10,(gw-5)/2);
-  const mx=Math.max(1,...s.months.map(m=>Math.max(m.cur,m.prev)));
+  const mx=Math.max(30000,...s.months.map(m=>Math.max(m.cur,m.prev)));
   const step=[1,2,2.5,5,10].map(f=>f*Math.pow(10,Math.floor(Math.log10(mx/3)))).find(v=>v*3>=mx)||mx/3, top=step*Math.ceil(mx/step);
   const y=v=>T+ph-(v/top)*ph;
   const lab=v=>v>=10000?(v/10000).toLocaleString("ja-JP",{maximumFractionDigits:1})+"万":num(v);
@@ -1791,7 +1804,7 @@ $("#s_issuerPdf").addEventListener("change",async e=>{
     toast(keys.length+"項目を入力欄に入れました。確認して保存してください");
   }catch(err){ alert("PDFを読み込めませんでした: "+err.message); }
 });
-$("#btnSaveSettings").onclick=()=>{ SKEYS.forEach(k=>settings[k]=$("#s_"+k).value); settings.savePdfDrive=$("#s_savePdfDrive").checked; settings.shareNoTitle=$("#s_shareNoTitle").checked; settings.stampClean=$("#s_stampClean").checked; settings.gasUrl=(settings.gasUrl||"").trim(); saveSettings(); applyTitle(); toast("設定を保存しました"); if(syncReady()) { pushSettings(); syncAll(); } };
+$("#btnSaveSettings").onclick=()=>{ rpFy=null; SKEYS.forEach(k=>settings[k]=$("#s_"+k).value); settings.savePdfDrive=$("#s_savePdfDrive").checked; settings.shareNoTitle=$("#s_shareNoTitle").checked; settings.stampClean=$("#s_stampClean").checked; settings.gasUrl=(settings.gasUrl||"").trim(); saveSettings(); applyTitle(); toast("設定を保存しました"); if(syncReady()) { pushSettings(); syncAll(); } };
 function applyTitle(){ $("#appTitle").textContent=settings.appTitle||"見積・請求書メーカー"; $("#appSub").textContent=settings.company||""; document.title=settings.appTitle||"見積・請求書メーカー"; }
 $("#btnExport").onclick=()=>{ const blob=new Blob([JSON.stringify({version:1,exportedAt:new Date().toISOString(),settings,docs},null,1)],{type:"application/json"}); download(blob,`見積請求バックアップ_${todayISO()}.json`); };
 $("#importFile").onchange=e=>{ const f=e.target.files[0]; if(!f) return; const r=new FileReader(); r.onload=()=>{ try{ const j=JSON.parse(r.result); if(!j.docs) throw 0; const ids=new Set(docs.map(d=>d.id)); let n=0; j.docs.forEach(d=>{ if(!ids.has(d.id)){docs.push(d);n++;} }); saveDocs(); if(j.settings&&confirm("設定も読み込みますか？")){ settings=Object.assign({},DEFAULT_SETTINGS,j.settings); saveSettings(); bindSettings(); applyTitle(); } toast(`${n}件を読み込みました`); renderList(); }catch(err){ alert("読み込めないファイルです"); } e.target.value=""; }; r.readAsText(f); };

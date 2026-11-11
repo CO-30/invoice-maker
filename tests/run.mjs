@@ -78,7 +78,7 @@ test("見積書 税込ラベル", ()=>{ const h=renderEstimate({...docBase,type:
 test("見積書 税抜は従来ラベル", ()=>{ const h=renderEstimate({...docBase,type:"estimate"}); eq([/税込\)/.test(h),/内消費税/.test(h)],[false,false]); });
 
 // ===== v1.11.0 売上集計・入金管理 =====
-const R = extractWith(["calc","fyMonths","latestDocs","salesDocs","docStatus","salesStats","receivables","estimateStats"], "");
+const R = extractWith(["calc","caseKey","linked","superseded","fyMonths","latestDocs","salesDocs","docStatus","salesStats","receivables","estimateStats"], "");
 const D=(o)=>Object.assign({id:Math.random().toString(36).slice(2),type:"invoice",base:"",rev:1,date:"2026-01-10",due:"",client:"A社",items:[{desc:"清掃",qty:1,price:10000}],taxRate:"10",rounding:"floor",updatedAt:1},o);
 
 test("fyMonths 1月始まり／4月始まり", ()=>{ eq(R.fyMonths(2026,1).slice(0,2),["2026-01","2026-02"]); eq(R.fyMonths(2026,4)[0],"2026-04"); eq(R.fyMonths(2026,4)[11],"2027-03"); eq(R.fyMonths(2026,4).length,12); });
@@ -133,6 +133,21 @@ test("estimateStats 受注率", ()=>{
     D({type:"estimate",base:"2601-002",date:"2026-01-06",lost:true}),D({type:"estimate",base:"2601-003",date:"2026-02-06"}),
     D({type:"estimate",base:"2601-003",rev:2,date:"2026-02-07"}),D({type:"estimate",base:"2501-001",date:"2025-02-07"})];
   eq(R.estimateStats(ds,2026,1),{count:3,won:1,lost:1,open:1,rate:1/3}); eq(R.estimateStats([],2026,1).rate,null); });
+
+// 監査指摘への対応
+test("取り込み書類(imp_)は案件番号でまとめない", ()=>{ const a=D({id:"imp_a",base:"2501-000"}), b=D({id:"imp_b",base:"2501-000"});
+  eq(R.salesStats([a,b],{fy:2026,today:"2026-02-01"}).months[0].cur,22000);
+  const q=D({id:"imp_q",type:"estimate",base:"2501-000"}); eq(R.docStatus(q,[q,a],"2026-02-01"),"open"); });
+test("取り込み見積から変換した請求書は fromId で受注", ()=>{ const q=D({id:"imp_q",type:"estimate",base:"2501-000"}), i=D({id:"i",base:"2501-005",fromId:"imp_q"});
+  eq(R.docStatus(q,[q,i],"x"),"won"); });
+test("領収書のある請求書は入金済み扱い", ()=>{ const i=D({id:"i",base:"2601-001",due:"2026-01-20"}), r=D({id:"r",type:"receipt",base:"2601-001"});
+  eq(R.docStatus(i,[i,r],"2026-02-01"),"paid"); eq(R.receivables([i,r],"2026-02-01").count,0);
+  const i2=D({id:"i2",base:"",due:"2026-01-20"}), r2=D({id:"r2",type:"receipt",base:"",fromId:"i2"});
+  eq(R.docStatus(i2,[i2,r2],"2026-02-01"),"paid"); });
+test("案件番号なしの請求書→領収書は二重計上しない", ()=>{ const i=D({id:"i",base:""}), r=D({id:"r",type:"receipt",base:"",fromId:"i"});
+  eq(R.salesStats([i,r],{fy:2026,today:"2026-02-01"}).total.cur,11000); });
+test("改訂前の請求書は旧版", ()=>{ const a=D({id:"a",base:"2601-001",rev:1,due:"2026-01-01"}), b=D({id:"b",base:"2601-001",rev:2});
+  eq(R.docStatus(a,[a,b],"2026-02-01"),"old"); eq(R.docStatus(b,[a,b],"2026-02-01"),"unpaid"); });
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed?1:0);
