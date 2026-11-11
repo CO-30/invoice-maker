@@ -149,5 +149,13 @@ test("案件番号なしの請求書→領収書は二重計上しない", ()=>{
 test("改訂前の請求書は旧版", ()=>{ const a=D({id:"a",base:"2601-001",rev:1,due:"2026-01-01"}), b=D({id:"b",base:"2601-001",rev:2});
   eq(R.docStatus(a,[a,b],"2026-02-01"),"old"); eq(R.docStatus(b,[a,b],"2026-02-01"),"unpaid"); });
 
+// v1.12.0 アプリ名 REDSEAL
+const {brandTitle} = extractFns(["brandTitle"]);
+test("旧アプリ名・空欄は REDSEAL", ()=>{ eq(brandTitle("見積・請求書メーカー"),"REDSEAL"); eq(brandTitle(""),"REDSEAL"); eq(brandTitle(undefined),"REDSEAL"); eq(brandTitle("  "),"REDSEAL"); });
+test("利用者が付けたアプリ名はそのまま", ()=> eq(brandTitle("山田工務店 請求"),"山田工務店 請求"));
+test("アイコン・マニフェストのファイルがある", ()=>{ const root=path.join(here,".."); const html=fs.readFileSync(path.join(root,"index.html"),"utf8");
+  for(const f of [...html.matchAll(/<link[^>]+href="(icons\/[^"]+|manifest\.webmanifest)"/g)].map(m=>m[1])) if(!fs.existsSync(path.join(root,f))) throw new Error("missing "+f);
+  if(!/apple-touch-icon/.test(html)) throw new Error("no apple-touch-icon"); });
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed?1:0);
