@@ -451,9 +451,9 @@ details.help summary{font-size:13px;color:var(--accent);font-weight:700;cursor:p
       <li>売上は<b>請求書の請求日</b>で数えます。再発行（改訂版）は最新の1枚だけ、請求書を作らずに出した領収書も数えます。見積は売上に入りません。</li>
       <li>別々の案件なのに<b>取引先・月・金額が同じ</b>書類があると、集計の上に「二重に数えているかもしれない書類」が出て、一覧にも「重複？」が付きます。作り直しの残りなら古い方を削除、別の仕事なら「重複ではない」を押します。作り直すときは「複製」ではなく「再発行（改訂版）」を使うと二重になりません。</li>
       <li>アプリを使う前の売上は「過去の売上を手入力」で月ごとに入れます（税込）。Googleドライブの既存Excelから取り込んだ書類は自動で入ります。</li>
-      <li>お金が振り込まれたら、請求書を開いて <span class="kbd">入金済み</span> にチェックして保存。一覧の「未入金」で払われていない請求書だけを表示でき、期限を過ぎると「期限超過」になります。</li>
+      <li>お金が振り込まれたら、請求書を開いて <span class="kbd">入金済み</span> にチェックするだけで保存されます（まだ一度も保存していない書類は、保存ボタンで反映）。一覧の「未入金」で払われていない請求書だけを表示でき、期限を過ぎると「期限超過」になります。</li>
       <li>未入金の請求書では「入金確認（LINE／メール）」で、やわらかい催促の文面が作れます。文面は設定で変えられます。</li>
-      <li>見積は、同じ案件の請求書を作ると自動で「受注」。断られたら見積を開いて「失注にする」。</li>
+      <li>見積は、同じ案件の請求書を作ると自動で「受注」。断られたら見積を開いて「失注にする」にチェック（チェックするだけで保存されます）。</li>
       <li>年度の始まり（1月／4月など）と年間目標は設定の「既定値」で変えられます。</li>
     </ol>
   </div>
@@ -836,7 +836,7 @@ function parseSheet_(sh, fileName){
 <script src="feedback/feedback-widget.js?v=1.14.0"></script>
 <script>
 /* ============ 定数・既定 ============ */
-const APP_VERSION="1.14.1";
+const APP_VERSION="1.14.2";
 // 要望の受付先（共通の要望受付GASのウェブアプリURL …/exec）。空なら送信欄は「未設定」と表示
 const FEEDBACK_URL="https://script.google.com/macros/s/AKfycbwRiAKzdRhW0SQFyNuoIlGmPQx9rGA199TT0weaKZ-v3-G4nmfdddiot9f45Rs9mSNCQQ/exec";
 const DEFAULT_STAMP = ""; // 社判は利用者が設定で登録する（見本の印は入れない）
@@ -1085,9 +1085,24 @@ function readEdit(){
   if(cur.type==="estimate") cur.lost=$("#lost").checked;
 }
 ["#base","#no","#date","#due","#layout","#validText","#note","#client","#honor","#contact","#subject","#taxRate","#rounding","#memo"].forEach(s=>$(s).addEventListener("input",()=>{dirty=true;readEdit();renderTotals();}));
-$("#paid").addEventListener("change",()=>{ dirty=true; if($("#paid").checked&&!$("#paidAt").value) $("#paidAt").value=todayISO(); readEdit(); renderStatus(); if(cur.paid) toast("入金済みにしました（保存してください）"); });
-$("#paidAt").addEventListener("change",()=>{ dirty=true; readEdit(); });
-$("#lost").addEventListener("change",()=>{ dirty=true; readEdit(); renderStatus(); });
+function quickSaveFields(docs,id,type,patch,now){ // 保存済みの書類の入金欄・失注だけを即保存（ほかの書きかけの変更は巻き込まない）
+  // docs には保存時のコピーが入っている（storeDoc）ので、docs[i] が「最後に保存した内容」
+  const i=docs.findIndex(d=>d&&d.id===id);
+  if(i<0||docs[i].deleted||docs[i].type!==type) return null;
+  docs[i]=Object.assign({},docs[i],patch,{updatedAt:now});
+  return docs[i];
+}
+function quickSave(patch,msg){ // 成功＝保存済みの書類に反映。未保存の書類は従来どおり保存ボタンで反映
+  const wasDirty=dirty;
+  if(!quickSaveFields(docs,cur.id,cur.type,patch,Date.now())){ dirty=true; return false; }
+  dirty=wasDirty;
+  saveDocs(); queuePush(cur.id); if(msg) toast(msg); return true;
+}
+$("#paid").addEventListener("change",()=>{ if($("#paid").checked&&!$("#paidAt").value) $("#paidAt").value=todayISO(); readEdit(); renderStatus();
+  if(!quickSave({paid:cur.paid,paidAt:cur.paidAt},cur.paid?"入金済みにしました（保存済み）":"未入金に戻しました（保存済み）")) toast(cur.paid?"入金済みにしました（書類を保存すると反映されます）":"未入金に戻しました（書類を保存すると反映されます）"); });
+$("#paidAt").addEventListener("change",()=>{ readEdit(); if(cur.paid&&!$("#paidAt").value) $("#paidAt").value=cur.paidAt;
+  if(!quickSave({paid:cur.paid,paidAt:cur.paidAt},"入金日を保存しました")) toast("入金日を変えました（書類を保存すると反映されます）"); });
+$("#lost").addEventListener("change",()=>{ readEdit(); renderStatus(); quickSave({lost:cur.lost},cur.lost?"失注にしました（保存済み）":"失注を外しました（保存済み）"); });
 $("#due").addEventListener("change",()=>{ readEdit(); renderStatus(); });
 $("#taxIn").addEventListener("change",()=>{ dirty=true; readEdit(); renderItems(); renderTotals(); toast("金額はそのまま、計算方法だけ変わります"); });
 $("#base").addEventListener("change",()=>{ readEdit(); cur.rev=nextRev(cur.type,cur.base,cur.id); cur.no=makeNo(cur.type,cur.base,cur.rev); $("#no").value=cur.no; });
@@ -1110,12 +1125,18 @@ $("#addPreset").onclick=()=>{
   if(last&&!last.desc&&!last.price) cur.items[cur.items.length-1]=it; else cur.items.push(it);
   dirty=true; renderItems(); renderTotals();
 };
+function storeDoc(docs,cur){ // 保存は cur のコピーを docs に入れる（同じオブジェクトにすると、書きかけが同期・ドライブ保存などで一緒に保存されるため）
+  const i=docs.findIndex(d=>d&&d.id===cur.id);
+  if(i>=0) ["pdfUrl","dupOk"].forEach(k=>{ if(docs[i][k]!==undefined) cur[k]=docs[i][k]; }); // 裏側の処理（ドライブ保存・重複ではない）が付けた値を優先して引き継ぐ
+  const snap=JSON.parse(JSON.stringify(cur));
+  if(i>=0) docs[i]=snap; else docs.unshift(snap);
+  return snap;
+}
 function saveCur(silent){
   readEdit();
   if(!cur.client&&!cur.subject){toast("宛名か件名を入力してください");return false;}
   cur.updatedAt=Date.now();
-  const i=docs.findIndex(d=>d.id===cur.id);
-  if(i>=0) docs[i]=cur; else docs.unshift(cur);
+  storeDoc(docs,cur);
   saveDocs(); dirty=false; if(!silent) toast("保存しました"); queuePush(cur.id); return true;
 }
 $("#btnSave").onclick=()=>saveCur();

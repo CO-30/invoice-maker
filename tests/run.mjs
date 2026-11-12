@@ -175,5 +175,24 @@ test("アイコン・マニフェストのファイルがある", ()=>{ const ro
   for(const f of [...html.matchAll(/<link[^>]+href="(icons\/[^"]+|manifest\.webmanifest)"/g)].map(m=>m[1])) if(!fs.existsSync(path.join(root,f))) throw new Error("missing "+f);
   if(!/apple-touch-icon/.test(html)) throw new Error("no apple-touch-icon"); });
 
+// v1.14.2 入金・失注チェックの即保存（受付1）
+const {quickSaveFields, storeDoc} = extractFns(["quickSaveFields","storeDoc"]);
+test("保存済み請求書は入金欄だけ即保存し、ほかの項目は触らない", ()=>{ const ds=[{id:"a",type:"invoice",client:"保存済みの宛名",items:[{qty:1,price:1000}],updatedAt:1}];
+  const r=quickSaveFields(ds,"a","invoice",{paid:true,paidAt:"2026-11-12"},99);
+  eq([r.paid,r.paidAt,r.client,r.items[0].price,r.updatedAt,ds[0]===r],[true,"2026-11-12","保存済みの宛名",1000,99,true]); });
+test("保存は編集中の書類のコピーを入れ、後の書きかけは一覧に入らない", ()=>{ const ds=[], cur={id:"a",type:"invoice",subject:"件名A"};
+  const snap=storeDoc(ds,cur); cur.subject="書きかけ"; eq([ds[0]===snap,snap!==cur,ds[0].subject],[true,true,"件名A"]);
+  const r=quickSaveFields(ds,"a","invoice",{paid:true,paidAt:"2026-11-12"},9); eq([r.subject,r.paid],["件名A",true]); });
+test("保存し直してもドライブのPDF・重複ではないの記録は消えない", ()=>{ const ds=[{id:"a",type:"invoice",pdfUrl:"https://example.com/x",dupOk:true}], cur={id:"a",type:"invoice",subject:"B"};
+  storeDoc(ds,cur); eq([ds[0].pdfUrl,ds[0].dupOk,cur.pdfUrl],["https://example.com/x",true,"https://example.com/x"]); });
+test("開いた後にPDFを出し直しても新しいリンクが残る", ()=>{ const ds=[{id:"a",type:"invoice",pdfUrl:"https://example.com/new"}], cur={id:"a",type:"invoice",pdfUrl:"https://example.com/old"};
+  storeDoc(ds,cur); eq(ds[0].pdfUrl,"https://example.com/new"); });
+test("新しい書類の保存は一覧の先頭に入る", ()=>{ const ds=[{id:"z",type:"invoice"}]; storeDoc(ds,{id:"n",type:"estimate"}); eq(ds.map(d=>d.id),["n","z"]); });
+test("未保存の書類は即保存しない", ()=>{ const ds=[{id:"a",type:"invoice"}]; eq(quickSaveFields(ds,"x","invoice",{paid:true},1),null); eq(ds,[{id:"a",type:"invoice"}]); });
+test("種別を切り替えて未保存なら即保存しない", ()=>{ const ds=[{id:"a",type:"estimate"}]; eq(quickSaveFields(ds,"a","invoice",{paid:true},1),null); eq(ds[0].paid,undefined); });
+test("削除済みの書類は即保存しない", ()=>{ const ds=[{id:"a",type:"estimate",deleted:true}]; eq(quickSaveFields(ds,"a","estimate",{lost:true},1),null); });
+test("入金済みを外すと入金日も消える形で保存できる", ()=>{ const ds=[{id:"a",type:"invoice",paid:true,paidAt:"2026-11-01"}];
+  const r=quickSaveFields(ds,"a","invoice",{paid:false,paidAt:""},5); eq([r.paid,r.paidAt],[false,""]); });
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed?1:0);
