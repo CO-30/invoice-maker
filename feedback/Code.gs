@@ -12,6 +12,9 @@
  *    → 表示された「ウェブアプリのURL（…/exec）」を各アプリの FEEDBACK_URL に入れる
  * 6. コードを変えたら「デプロイを管理 → 鉛筆 → 新バージョン → デプロイ」
  *
+ * 2026-11-17 スクショ（shots）を受け付けるようにした。貼り替えたら、ドライブの許可のため setup を1回実行してから
+ *   「デプロイを管理 → 鉛筆 → 新バージョン → デプロイ」（URLは変わらない）。スクショはドライブの「要望のスクショ」フォルダに保存
+ *
  * 届いた要望は「要望」シートに1行ずつたまります。状態の列は 未対応／対応中／完了／見送り などを自由に書いてOK。
  */
 const NOTIFY_EMAIL = "";            // 通知先。空なら このスクリプトの持ち主のGmail
@@ -21,8 +24,11 @@ const DIGEST_HOUR = 8;              // 何時ごろに送るか（0〜23）
 const MAX_PER_DEVICE_PER_DAY = 20;  // 1台から受け付ける上限（荒らし対策。約6時間ごとにリセット）
 const MAX_TOTAL = 200;              // 全体で受け付ける上限（約6時間あたり。端末IDを偽る荒らし対策）
 const MAX_MAILS_PER_DAY = 50;       // 1件ごとの通知メールの上限（Gmailの送信枠を週のまとめ用に残す）
+const MAX_SHOTS = 3;                // 1件に付けられるスクショの枚数
+const SHOT_BYTES = 400000;          // スクショ1枚の大きさの上限（アプリ側で縮めてから送る）
+const SHOT_FOLDER = "要望のスクショ";  // ドライブのフォルダ名
 const SHEET = "要望";
-const COLS = ["受信日時","アプリ","版","種類","内容","返信先","端末","操作の記録","エラー","その他","状態","メモ","端末ID"];
+const COLS = ["受信日時","アプリ","版","種類","内容","返信先","端末","操作の記録","エラー","その他","状態","メモ","端末ID","スクショ"];
 
 function doGet(){ return out_({ok:true, service:"feedback"}); }
 
@@ -46,18 +52,44 @@ function receive_(r){
   const row = [
     new Date(), safe_(app), safe_(clip_(r.version, 20)), safe_(clip_(r.kind, 10) || "要望"), safe_(text), safe_(clip_(r.reply, 120)),
     safe_(clip_([env.device, env.standalone ? "ホーム画面" : "ブラウザ", env.screen, env.path].filter(Boolean).join(" / "), 200)),
-    safe_(clip_(fmtLog_(r.log), 5000)), safe_(clip_(fmtErr_(r.errors), 3000)), safe_(clip_(r.context ? JSON.stringify(r.context) : "", 1000)),
-    "未対応", "", safe_(dev)
+    safe_(clip_(fmtLog_(r.log), 8000)), safe_(clip_(fmtErr_(r.errors), 3000)), safe_(clip_(r.context ? JSON.stringify(r.context) : "", 1000)),
+    "未対応", "", safe_(dev), ""
   ];
+  const shots = saveShots_(r.shots, app);
+  row[13] = shots.cell;
   const lock = LockService.getScriptLock(); lock.waitLock(20000);
   try{ sheet_().appendRow(row); } finally{ lock.releaseLock(); }
   if(NOTIFY_EACH && mailBudget_()){
-    try{ notify_(row); }catch(err){ console.warn("notify failed: " + err); }
+    try{ notify_(row, shots.blobs); }catch(err){ console.warn("notify failed: " + err); }
   }
   return {ok:true};
 }
 
-function notify_(row){
+/** スクショをドライブに保存する。返す cell はシートの「スクショ」列（リンクを1行ずつ）、blobs は通知メールの添付 */
+function saveShots_(shots, app){
+  if(!Array.isArray(shots) || !shots.length) return { cell:"", blobs:[] };
+  const ok = shots.slice(0, MAX_SHOTS).map(b => String(b || ""))
+    .filter(b => /^\/9j\//.test(b) && b.length * 0.75 <= SHOT_BYTES && /^[A-Za-z0-9+\/=]+$/.test(b));
+  if(!ok.length) return { cell:"", blobs:[] };
+  let blobs = [];
+  try{
+    const stamp = Utilities.formatDate(new Date(), "Asia/Tokyo", "yyyyMMdd-HHmmss");
+    blobs = ok.map((b, i) => Utilities.newBlob(Utilities.base64Decode(b), "image/jpeg", clip_(app, 20).replace(/[\\/:*?"<>|]/g, "_") + "_" + stamp + "_" + (i + 1) + ".jpg"));
+    const folder = shotFolder_();
+    return { cell: blobs.map(bl => folder.createFile(bl).getUrl()).join("\n"), blobs };
+  }catch(err){
+    console.warn("shots failed: " + err);
+    return { cell: "保存できず（" + ok.length + "枚）", blobs };
+  }
+}
+function shotFolder_(){
+  const p = PropertiesService.getScriptProperties(), id = p.getProperty("shotFolder");
+  if(id){ try{ return DriveApp.getFolderById(id); }catch(err){ /* 消された：作り直す */ } }
+  const f = DriveApp.createFolder(SHOT_FOLDER); p.setProperty("shotFolder", f.getId()); return f;
+}
+function shotCount_(cell){ const c = String(cell || ""); return /^保存できず/.test(c) ? +(c.match(/\d+/) || [0])[0] : c.split("\n").filter(x => /^https?:/.test(x)).length; }
+
+function notify_(row, blobs){
   const [at, app, ver, kind, text, reply, dev, log, errs] = row;
   const subject = "【" + app + "】" + kind + "：" + text.replace(/\s+/g," ").slice(0, 30);
   const body = [
@@ -65,13 +97,15 @@ function notify_(row){
     text, "",
     "返信先：" + (reply || "なし"),
     "端末：" + dev,
+    row[13] ? "スクショ：" + shotCount_(row[13]) + "枚" + (blobs && blobs.length ? "（このメールに添付）" : "") + "\n" + row[13] : "",
     errs ? "\n▼ エラー\n" + errs : "",
-    log ? "\n▼ 直前の操作（新しい順）\n" + log.split("\n").slice(-15).reverse().join("\n") : "",
+    log ? "\n▼ 直前の操作（新しい順）\n" + log.split("\n").slice(-30).reverse().join("\n") : "",
     "", "一覧：" + SpreadsheetApp.getActiveSpreadsheet().getUrl(),
     "", "━━━━━━━━━━━━━━━━", "▼ AIに貼る用（この1件だけ。まとめて頼むなら週のまとめメールかシートの「要望」メニューから）", "━━━━━━━━━━━━━━━━", "",
     aiPrompt_(app, [row])
   ].join("\n");
-  MailApp.sendEmail(notifyTo_(), subject, body);
+  if(blobs && blobs.length) MailApp.sendEmail(notifyTo_(), subject, body, { attachments: blobs });
+  else MailApp.sendEmail(notifyTo_(), subject, body);
 }
 
 /** 週1回のまとめ（setup で予約。手動で実行してもOK） */
@@ -116,7 +150,8 @@ function aiPrompt_(app, rows){
     if(r[6]) L.push("端末：" + r[6]);
     if(r[9]) L.push("アプリの状態：" + clip_(r[9], 300));
     if(r[8]) L.push("エラー：" + clip_(String(r[8]).replace(/\n/g, " / "), 600));
-    if(r[7]) L.push("直前の操作（古い→新しい）：" + String(r[7]).split("\n").slice(-15).map(x => x.replace(/^(\d+\/\d+ )?\d+:\d+:\d+ /, "")).join(" → "));
+    if(r[13]) L.push("スクショ：" + shotCount_(r[13]) + "枚（受付シートのリンク・通知メールの添付。AIに見せるなら一緒に添付する）");
+    if(r[7]) L.push("直前の操作（古い→新しい）：" + String(r[7]).split("\n").slice(-30).map(x => x.replace(/^(\d+\/\d+ )?\d+:\d+:\d+ /, "")).join(" → "));
     L.push("");
   });
   if(more > 0) L.push("※ ほかに古い未対応が " + more + "件あります（受付シート参照）。まず上の新しい" + MAX_ITEMS + "件を対応してください。");
@@ -174,6 +209,8 @@ function sheet_(){
     sh.getRange(1,1,1,COLS.length).setFontWeight("bold").setBackground("#eef0f3");
     sh.setColumnWidth(5, 360); sh.setColumnWidth(8, 260);
     sh.getRange("K2:K").setDataValidation(SpreadsheetApp.newDataValidation().requireValueInList(["未対応","対応中","完了","見送り"], true).setAllowInvalid(true).build());
+  } else if(sh.getLastColumn() < COLS.length){ // 列が増える前に作ったシート：見出しだけ書き足す
+    sh.getRange(1, sh.getLastColumn() + 1, 1, COLS.length - sh.getLastColumn()).setValues([COLS.slice(sh.getLastColumn())]).setFontWeight("bold").setBackground("#eef0f3");
   }
   return sh;
 }
@@ -195,7 +232,7 @@ function safe_(v){ v = String(v == null ? "" : v); return /^[=+\-@]/.test(v) ? "
 function clip_(v, n){ return String(v == null ? "" : v).slice(0, n); }
 function fmtLog_(log){
   if(!Array.isArray(log)) return "";
-  return log.slice(-30).map(x => clip_(x && x.t, 16) + " " + clip_(x && x.a, 80)).join("\n");
+  return log.slice(-200).map(x => clip_(x && x.t, 16) + " " + clip_(x && x.a, 80)).join("\n");
 }
 function fmtErr_(errs){
   if(!Array.isArray(errs)) return "";
