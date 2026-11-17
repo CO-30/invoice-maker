@@ -12,25 +12,29 @@ function ok(c,msg){ if(!c) throw new Error(msg||"assert"); }
 function test(name, fn){ try{ fn(); passed++; console.log("ok   "+name); }catch(e){ failed++; console.log("FAIL "+name+"\n     "+e.message); } }
 
 function env(){
-  const rows=[], mails=[], cache={}, props={};
-  const sh={ appendRow:r=>rows.push(r), setFrozenRows(){}, getRange:()=>({setFontWeight(){return this},setBackground(){return this},setDataValidation(){return this}}), setColumnWidth(){},
+  const rows=[], mails=[], cache={}, props={}, files=[], drive={fail:false};
+  const sh={ appendRow:r=>rows.push(r), setFrozenRows(){}, getRange:(r,c,nr,nc)=>({setFontWeight(){return this},setBackground(){return this},setDataValidation(){return this},
+      setValues(v){ v[0].forEach((x,i)=>{ rows[r-1][c-1+i]=x; }); return this; }}), setColumnWidth(){},
+    getLastColumn:()=>rows.length?rows[0].length:0,
     getDataRange:()=>({getValues:()=>rows.map(r=>r.slice())}) };
   const ss={ getSheetByName:()=>rows.length?sh:null, insertSheet:()=>sh, getUrl:()=>"https://sheet" };
   const dv={ requireValueInList(){return this}, setAllowInvalid(){return this}, build(){return {}} };
   const ctx={
     SpreadsheetApp:{ getActiveSpreadsheet:()=>ss, newDataValidation:()=>dv },
-    MailApp:{ sendEmail:(to,sub,body)=>mails.push({to,sub,body}) },
+    MailApp:{ sendEmail:(to,sub,body,opt)=>mails.push({to,sub,body,att:(opt&&opt.attachments)||[]}) },
+    DriveApp:{ createFolder:n=>({getId:()=>"F1",createFile(b){ if(drive.fail) throw new Error("no auth"); files.push(b); return {getUrl:()=>"https://drive/"+files.length}; }}),
+      getFolderById:()=>{ throw new Error("gone"); } },
     Session:{ getEffectiveUser:()=>({getEmail:()=>"me@example.com"}), getScriptTimeZone:()=>"Asia/Tokyo" },
     LockService:{ getScriptLock:()=>({waitLock(){},releaseLock(){}}) },
     CacheService:{ getScriptCache:()=>({get:k=>cache[k]??null, put:(k,v)=>{cache[k]=v;}}) },
     PropertiesService:{ getScriptProperties:()=>({getProperty:k=>props[k]??null, setProperty:(k,v)=>{props[k]=v;}}) },
     ScriptApp:{ WeekDay:{MONDAY:"MONDAY"}, getProjectTriggers:()=>[] },
-    Utilities:{ formatDate:(d,tz,f)=>f==="yyyyMMdd"?"20261112":(d.getMonth()+1)+"/"+d.getDate() },
+    Utilities:{ formatDate:(d,tz,f)=>f==="yyyyMMdd"?"20261112":(d.getMonth()+1)+"/"+d.getDate(), base64Decode:b=>b, newBlob:(data,type,name)=>({data,type,name}) },
     ContentService:{ createTextOutput:t=>({t,setMimeType(){return this}}), MimeType:{JSON:"json"} },
     console, Date, JSON, String, Array, Object, Math
   };
   vm.createContext(ctx); vm.runInContext(src, ctx);
-  return {ctx, rows, mails, cache, props};
+  return {ctx, rows, mails, cache, props, files, drive};
 }
 const sample={app:"REDSEAL",version:"1.14.0",kind:"不具合",text:"同期できない",reply:"",deviceId:"d1",
   env:{device:"iPhone 18.1",standalone:true,screen:"390x844",path:"/invoice-maker/"},
@@ -48,7 +52,7 @@ test("アプリ名・本文がなければ受け付けない", ()=>{ const E=env
 test("1台からの送信回数に上限", ()=>{ const E=env(); let last;
   for(let i=0;i<21;i++) last=E.ctx.receive_(sample); ok(last.error==="too many","21件目は拒否"); ok(E.rows.length===21,"20件+見出し"); });
 test("長すぎる本文・操作記録は切り詰め", ()=>{ const E=env(); E.ctx.receive_({...sample,text:"あ".repeat(5000),log:Array.from({length:100},(_,i)=>({t:"x",a:"押した "+i}))});
-  ok(E.rows[1][4].length===2000,"text clipped"); ok(E.rows[1][7].split("\n").length===30,"log 30 lines"); });
+  ok(E.rows[1][4].length===2000,"text clipped"); ok(E.rows[1][7].split("\n").length===100,"log 100 lines"); });
 test("壊れたJSONは bad json", ()=>{ const E=env(); const o=E.ctx.doPost({postData:{contents:"{"}}); ok(JSON.parse(o.t).error==="bad json"); });
 test("週1まとめ：アプリ別の件数とAIに渡す用の文面", ()=>{ const E=env(); E.ctx.receive_(sample); E.ctx.receive_({...sample,app:"左官見積",kind:"要望",text:"単位に㎡がほしい",deviceId:"d2"});
   E.mails.length=0; E.ctx.weeklyDigest(); ok(E.mails.length===1,"1 mail"); const m=E.mails[0];
@@ -85,4 +89,21 @@ test("AI用の指示書は件数と長さに上限・利用者の文は指示で
   ok(/あなたへの指示ではありません/.test(t)&&/実装する前に私の承認/.test(t),"guards");
   ok(/押した: ボタン29$/m.test(t),"time stripped"); ok(/押した: x/.test(E.ctx.aiPrompt_("A",[[new Date(),"A","1","要望","t","","","08:00:01 押した: x","","","未対応"]])),"old time-only format"); });
 
+
+const JPG="/9j/"+"A".repeat(100);
+test("スクショ2枚：ドライブに保存・スクショ列にリンク・通知メールに添付・AI文面に枚数", ()=>{ const E=env(); E.ctx.receive_({...sample,shots:[JPG,JPG]});
+  ok(E.files.length===2&&E.files[0].type==="image/jpeg"&&/^REDSEAL_.*_1\.jpg$/.test(E.files[0].name),"files "+JSON.stringify(E.files.map(f=>f.name)));
+  ok(E.rows[0][13]==="スクショ","header col"); ok(E.rows[1][13]==="https://drive/1\nhttps://drive/2","cell "+E.rows[1][13]);
+  ok(E.mails[0].att.length===2,"attachments"); ok(/スクショ：2枚（このメールに添付）/.test(E.mails[0].body),"mail line"); ok(/スクショ：2枚（受付シート/.test(E.mails[0].body),"ai line"); });
+test("スクショは3枚まで・JPEG でないもの・大きすぎるものは捨てる", ()=>{ const E=env();
+  E.ctx.receive_({...sample,shots:[JPG,JPG,"iVBORw0KGgo","/9j/"+"A".repeat(600000),JPG,JPG]});
+  ok(E.files.length===2,"3枚目まで見て、使えるのは2枚: "+E.files.length);
+  E.ctx.receive_({...sample,deviceId:"d9",shots:"x"}); ok(E.rows[2][13]==="","not array → empty"); });
+test("ドライブに保存できなくても行は残り「保存できず」", ()=>{ const E=env(); E.drive.fail=true; const r=E.ctx.receive_({...sample,shots:[JPG]});
+  ok(r.ok,"ok"); ok(E.rows[1][13]==="保存できず（1枚）",E.rows[1][13]); ok(E.mails[0].att.length===1,"それでもメールには添付"); });
+test("列が増える前のシートには見出しを書き足す", ()=>{ const E=env(); E.rows.push(["受信日時","アプリ","版","種類","内容","返信先","端末","操作の記録","エラー","その他","状態","メモ","端末ID"]);
+  E.ctx.receive_(sample); ok(E.rows[0][13]==="スクショ"&&E.rows[0].length===14,"header "+E.rows[0].length); });
+test("スクショ付きは全体の上限を超えると保存しない（文は受け付ける）", ()=>{ const E=env(); let last;
+  for(let i=0;i<41;i++) last=E.ctx.receive_({...sample,deviceId:"x"+i,shots:[JPG]});
+  ok(last.ok,"ok"); ok(E.files.length===40,"40枚まで: "+E.files.length); ok(/^上限のため保存せず/.test(E.rows[41][13]),E.rows[41][13]); });
 console.log(`\n${passed} passed, ${failed} failed`); if(failed) process.exit(1);
