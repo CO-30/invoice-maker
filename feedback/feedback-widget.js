@@ -27,7 +27,9 @@
   var MAX_ERR = 5, DAY_LIMIT = 5, PH_PX = 1280, PH_BYTES = 400000;
   var cfg = { app:"", version:"", endpoint:"", getContext:null, title:"ご要望・不具合の報告", shots:0, capture:null, canCapture:null, aiShare:false, maxLog:30 };
   var started = false;
-  var shots = []; // 添えたスクショ { url: dataURL, b64 }
+  var shots = []; // 添えたスクショ { url: dataURL, b64 }（ホームと使い方など、描いた欄すべてで共有）
+  var redraws = []; // 描いた欄のサムネを描き直す関数（外した・送った・足したを、ほかの欄にも映す）
+  function redrawAll(){ redraws = redraws.filter(function(f){ return f(); }); }
   function maxLog(){ var n = +cfg.maxLog || 30; return Math.max(1, Math.min(200, n)); }
   function maxShots(){ var n = +cfg.shots || 0; return Math.max(0, Math.min(5, n)); }
 
@@ -147,9 +149,9 @@
   /** スクショを1枚足す（上限なら false） */
   function addShot(src){
     if(shots.length >= maxShots()) return Promise.resolve(false);
-    return shrink(src).then(function(s){ if(shots.length >= maxShots()) return false; shots.push(s); return true; });
+    return shrink(src).then(function(s){ if(shots.length >= maxShots()) return false; shots.push(s); redrawAll(); return true; });
   }
-  function clearShots(){ shots = []; }
+  function clearShots(){ shots = []; redrawAll(); }
   function toFiles(){
     return shots.map(function(s, i){
       var bin = atob(s.b64), a = new Uint8Array(bin.length);
@@ -209,6 +211,7 @@
     if(!cfg.endpoint){ go.disabled = true; msg.textContent = "（受付先がまだ設定されていません）"; }
 
     var pick = box.querySelector(".pick"), cap = box.querySelector(".cap"), fi = box.querySelector(".fi"), th = box.querySelector(".th");
+    var busy = false; // 写真を用意している間は送らない（送った後に1枚遅れて入らないように）
     function thumbs(){
       if(!th) return;
       th.innerHTML = "";
@@ -216,38 +219,39 @@
         var sp = document.createElement("span"), im = document.createElement("img"), x = document.createElement("button");
         im.src = s.url; im.alt = "添えたスクショ " + (i + 1);
         x.type = "button"; x.textContent = "×"; x.setAttribute("aria-label", "スクショ " + (i + 1) + " を外す");
-        x.onclick = function(){ shots.splice(i, 1); thumbs(); };
+        x.onclick = function(){ var k = shots.indexOf(s); if(k >= 0) shots.splice(k, 1); redrawAll(); };
         sp.appendChild(im); sp.appendChild(x); th.appendChild(sp);
       });
       var full = shots.length >= N;
-      pick.disabled = full; if(cap) cap.disabled = full;
+      pick.disabled = full || busy; if(cap) cap.disabled = full || busy; go.disabled = busy || !cfg.endpoint;
       pick.textContent = shots.length ? "スクショ・写真を選ぶ（あと" + (N - shots.length) + "枚）" : "スクショ・写真を選ぶ（" + N + "枚まで）";
     }
     if(N){
       thumbs();
+      redraws.push(function(){ if(!document.body.contains(box)) return false; thumbs(); return true; }); // 消えた欄は外す
       pick.onclick = function(){ fi.click(); }; // iPhone は「写真ライブラリ・写真を撮る・ファイル」から選べる
       fi.onchange = function(){
         var list = Array.prototype.slice.call(fi.files || []); fi.value = "";
         if(!list.length) return;
         var room = N - shots.length, bad = 0;
         if(list.length > room) msg.textContent = "スクショは" + N + "枚までです。はじめの" + room + "枚を入れます";
-        pick.disabled = true; pick.textContent = "用意しています…";
+        busy = true; thumbs(); pick.textContent = "用意しています…";
         list.slice(0, room).reduce(function(pr, f){ return pr.then(function(){ return addShot(f).catch(function(){ bad++; }); }); }, Promise.resolve())
-          .then(function(){ thumbs(); if(bad) msg.textContent = bad + "枚は読めませんでした（別の形式で撮り直すか、画面のスクショにしてください）"; });
+          .then(function(){ busy = false; thumbs(); if(bad) msg.textContent = bad + "枚は添えられませんでした（読めない形式か、大きすぎる写真です。画面のスクショにすると添えられます）"; });
       };
       if(cap) cap.onclick = function(){
-        cap.disabled = true; msg.textContent = "今の画面を写しています…";
+        busy = true; thumbs(); msg.textContent = "今の画面を写しています…";
         Promise.resolve().then(function(){ return cfg.capture(); })
           .then(function(u){ if(!u) throw new Error("none"); return addShot(u); })
           .then(function(){ msg.textContent = "今の画面を添えました"; }, function(){ msg.textContent = "今の画面を写せませんでした。端末のスクショを撮って「選ぶ」から添えてください"; })
-          .then(thumbs);
+          .then(function(){ busy = false; thumbs(); });
       };
     }
 
     go.onclick = function(){
       var t = ta.value.trim(); if(!t){ msg.textContent = "内容を書いてください"; ta.focus(); return; }
       go.disabled = true; msg.textContent = shots.length ? "送信中…（スクショがあるので少しかかります）" : "送信中…";
-      send(t, kind, em.value.trim()).then(function(){ ta.value = ""; thumbs(); msg.textContent = "送信しました。ありがとうございます！"; })
+      send(t, kind, em.value.trim()).then(function(){ ta.value = ""; msg.textContent = "送信しました。ありがとうございます！"; })
         .catch(function(e){ msg.textContent = (e && e.message === "Load failed" || e instanceof TypeError) ? "通信できませんでした。電波の良い所でもう一度お試しください" : (e && e.message || "送信できませんでした"); })
         .then(function(){ go.disabled = false; });
     };
@@ -264,7 +268,10 @@
       if(touch && navigator.share && canFiles){
         var d = { text: text }; if(files.length) d.files = files;
         navigator.share(d).then(function(){ msg.textContent = "渡しました。届いた文が切れていたら、コピー済みの文を貼り付けてください"; },
-          function(e){ if(e && e.name === "AbortError") { msg.textContent = "文はコピーしてあります。AI に貼り付けてください"; return; } showText(); });
+          function(e){
+            if(!(e && e.name === "AbortError")) return showText();
+            copied.then(function(ok){ if(ok) msg.textContent = "文はコピーしてあります。AI に貼り付けてください"; else showText(); });
+          });
         return;
       }
       copied.then(function(ok){

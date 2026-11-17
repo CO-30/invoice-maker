@@ -103,4 +103,7 @@ test("ドライブに保存できなくても行は残り「保存できず」",
   ok(r.ok,"ok"); ok(E.rows[1][13]==="保存できず（1枚）",E.rows[1][13]); ok(E.mails[0].att.length===1,"それでもメールには添付"); });
 test("列が増える前のシートには見出しを書き足す", ()=>{ const E=env(); E.rows.push(["受信日時","アプリ","版","種類","内容","返信先","端末","操作の記録","エラー","その他","状態","メモ","端末ID"]);
   E.ctx.receive_(sample); ok(E.rows[0][13]==="スクショ"&&E.rows[0].length===14,"header "+E.rows[0].length); });
+test("スクショ付きは全体の上限を超えると保存しない（文は受け付ける）", ()=>{ const E=env(); let last;
+  for(let i=0;i<41;i++) last=E.ctx.receive_({...sample,deviceId:"x"+i,shots:[JPG]});
+  ok(last.ok,"ok"); ok(E.files.length===40,"40枚まで: "+E.files.length); ok(/^上限のため保存せず/.test(E.rows[41][13]),E.rows[41][13]); });
 console.log(`\n${passed} passed, ${failed} failed`); if(failed) process.exit(1);

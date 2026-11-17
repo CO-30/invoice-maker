@@ -27,6 +27,7 @@ const MAX_MAILS_PER_DAY = 50;       // 1件ごとの通知メールの上限（G
 const MAX_SHOTS = 3;                // 1件に付けられるスクショの枚数
 const SHOT_BYTES = 400000;          // スクショ1枚の大きさの上限（アプリ側で縮めてから送る）
 const SHOT_FOLDER = "要望のスクショ";  // ドライブのフォルダ名
+const MAX_SHOT_POSTS = 40;          // スクショ付きで受け付ける件数の上限（約6時間あたり・全体。ドライブを埋める荒らし対策）
 const SHEET = "要望";
 const COLS = ["受信日時","アプリ","版","種類","内容","返信先","端末","操作の記録","エラー","その他","状態","メモ","端末ID","スクショ"];
 
@@ -52,7 +53,7 @@ function receive_(r){
   const row = [
     new Date(), safe_(app), safe_(clip_(r.version, 20)), safe_(clip_(r.kind, 10) || "要望"), safe_(text), safe_(clip_(r.reply, 120)),
     safe_(clip_([env.device, env.standalone ? "ホーム画面" : "ブラウザ", env.screen, env.path].filter(Boolean).join(" / "), 200)),
-    safe_(clip_(fmtLog_(r.log), 8000)), safe_(clip_(fmtErr_(r.errors), 3000)), safe_(clip_(r.context ? JSON.stringify(r.context) : "", 1000)),
+    safe_(String(fmtLog_(r.log)).slice(-8000)), /* 長すぎたら古い側を落とす */ safe_(clip_(fmtErr_(r.errors), 3000)), safe_(clip_(r.context ? JSON.stringify(r.context) : "", 1000)),
     "未対応", "", safe_(dev), ""
   ];
   const shots = saveShots_(r.shots, app);
@@ -71,6 +72,7 @@ function saveShots_(shots, app){
   const ok = shots.slice(0, MAX_SHOTS).map(b => String(b || ""))
     .filter(b => /^\/9j\//.test(b) && b.length * 0.75 <= SHOT_BYTES && /^[A-Za-z0-9+\/=]+$/.test(b));
   if(!ok.length) return { cell:"", blobs:[] };
+  if(!allow_("shots", MAX_SHOT_POSTS)) return { cell:"上限のため保存せず（" + ok.length + "枚）", blobs:[] };
   let blobs = [];
   try{
     const stamp = Utilities.formatDate(new Date(), "Asia/Tokyo", "yyyyMMdd-HHmmss");
@@ -83,11 +85,14 @@ function saveShots_(shots, app){
   }
 }
 function shotFolder_(){
-  const p = PropertiesService.getScriptProperties(), id = p.getProperty("shotFolder");
-  if(id){ try{ return DriveApp.getFolderById(id); }catch(err){ /* 消された：作り直す */ } }
-  const f = DriveApp.createFolder(SHOT_FOLDER); p.setProperty("shotFolder", f.getId()); return f;
+  const p = PropertiesService.getScriptProperties(), get = () => { const id = p.getProperty("shotFolder"); if(!id) return null; try{ return DriveApp.getFolderById(id); }catch(err){ return null; } };
+  const f0 = get(); if(f0) return f0;
+  // 同時に届いても、フォルダを2つ作らないように
+  const lock = LockService.getScriptLock(); lock.waitLock(20000);
+  try{ const f1 = get(); if(f1) return f1; const f = DriveApp.createFolder(SHOT_FOLDER); p.setProperty("shotFolder", f.getId()); return f; }
+  finally{ lock.releaseLock(); }
 }
-function shotCount_(cell){ const c = String(cell || ""); return /^保存できず/.test(c) ? +(c.match(/\d+/) || [0])[0] : c.split("\n").filter(x => /^https?:/.test(x)).length; }
+function shotCount_(cell){ const c = String(cell || ""); return /^(保存できず|上限のため)/.test(c) ? +(c.match(/\d+/) || [0])[0] : c.split("\n").filter(x => /^https?:/.test(x)).length; }
 
 function notify_(row, blobs){
   const [at, app, ver, kind, text, reply, dev, log, errs] = row;
@@ -195,6 +200,7 @@ function digestText_(rows, since, openCount){
 /** 最初に1回実行：シート作成と週1回の予約 */
 function setup(){
   sheet_();
+  shotFolder_(); // スクショのフォルダを先に作る（ドライブの許可もここで求められる）
   ScriptApp.getProjectTriggers().filter(t => t.getHandlerFunction() === "weeklyDigest").forEach(t => ScriptApp.deleteTrigger(t));
   ScriptApp.newTrigger("weeklyDigest").timeBased().onWeekDay(DIGEST_WEEKDAY).atHour(DIGEST_HOUR).inTimezone("Asia/Tokyo").create();
   MailApp.sendEmail(notifyTo_(), "【要望受付】設定が完了しました", "このアドレスに要望の通知と、毎週のまとめが届きます。\n" + SpreadsheetApp.getActiveSpreadsheet().getUrl());
