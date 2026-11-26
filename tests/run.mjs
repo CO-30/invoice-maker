@@ -198,6 +198,15 @@ test("入金済みを外すと入金日も消える形で保存できる", ()=>{
 const {mergePulled} = extractFns(["mergePulled"]);
 test("同期：サーバーが新しく未送信なしならサーバー側", ()=>{ const L={id:"a",subject:"端末",updatedAt:1}, S={id:"a",subject:"AI",updatedAt:5}; const r=mergePulled(L,S,false); eq([r.doc.subject,r.kept],["AI",false]); });
 test("同期：端末が新しければ端末のまま", ()=>{ const L={id:"a",subject:"端末",updatedAt:9}, S={id:"a",subject:"AI",updatedAt:5}; const r=mergePulled(L,S,true); eq(r.doc===L,true); });
+test("同期：端末で未送信の入金の記録は、サーバーが未入金でも消さない", ()=>{
+  const L={id:"a",paid:true,paidAt:"2026-11-20",updatedAt:3}, S={id:"a",memo:"別端末",updatedAt:5};
+  const r=mergePulled(L,S,true); eq([r.doc.paid,r.doc.paidAt,r.kept],[true,"2026-11-20",true]); });
+test("送信待ち：skipped と送信中に変わった書類は残す", ()=>{
+  const {flushDone} = extractFns(["flushDone"]);
+  const payload=[{id:"a",updatedAt:1},{id:"b",updatedAt:1},{id:"c",updatedAt:1}];
+  const now=[{id:"a",updatedAt:1},{id:"b",updatedAt:1},{id:"c",updatedAt:2}];
+  const d=flushDone(payload,[{id:"a",updatedAt:1},{id:"b",skipped:true},{id:"c",updatedAt:1}],now); eq([...d],["a"]); });
+test("即保存：端末の時計が遅れていても前の版より新しく", ()=>{ const ds=[{id:"a",type:"invoice",updatedAt:1000}]; const r=quickSaveFields(ds,"a","invoice",{paid:true},5); eq(r.updatedAt,1001); });
 test("同期：未送信の変更は残し、入金だけサーバー側を採る", ()=>{
   const L={id:"a",subject:"本人が直した",aiDraft:undefined,updatedAt:3}, S={id:"a",subject:"AI",aiDraft:true,paid:true,paidAt:"2026-11-26",updatedAt:5};
   const r=mergePulled(L,S,true); eq([r.doc.subject,!!r.doc.aiDraft,r.doc.paid,r.doc.paidAt,r.doc.updatedAt,r.kept],["本人が直した",false,true,"2026-11-26",6,true]); });

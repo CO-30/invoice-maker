@@ -1589,7 +1589,7 @@ function quickSaveFields(docs,id,type,patch,now){ // 保存済みの書類の入
   // docs には保存時のコピーが入っている（storeDoc）ので、docs[i] が「最後に保存した内容」
   const i=docs.findIndex(d=>d&&d.id===id);
   if(i<0||docs[i].deleted||docs[i].type!==type) return null;
-  docs[i]=Object.assign({},docs[i],patch,{updatedAt:now});
+  docs[i]=Object.assign({},docs[i],patch,{updatedAt:Math.max(now,(docs[i].updatedAt||0)+1)}); // 端末の時計が遅れていても前の版より新しく
   return docs[i];
 }
 function quickSave(patch,msg){ // 成功＝保存済みの書類に反映。未保存の書類は従来どおり保存ボタンで反映
@@ -1636,7 +1636,7 @@ function saveCur(silent){
   readEdit();
   if(!cur.client&&!cur.subject){toast("宛名か件名を入力してください");return false;}
   delete cur.aiDraft; $("#aiNote").style.display="none"; // 本人が確認・保存した＝AI下書きではなくなる
-  cur.updatedAt=Date.now();
+  { const prev=docs.find(d=>d.id===cur.id); cur.updatedAt=Math.max(Date.now(),(cur.updatedAt||0)+1,prev?(prev.updatedAt||0)+1:0); } // 端末の時計が遅れていても前の版（サーバーの時刻のことがある）より新しく
   storeDoc(docs,cur);
   saveDocs(); dirty=false; if(!silent) toast("保存しました"); queuePush(cur.id); return true;
 }
@@ -2414,30 +2414,39 @@ let queue=JSON.parse(localStorage.getItem(LS_Q)||"[]");
 function addQueue(x){ queue.push(x); localStorage.setItem(LS_Q,JSON.stringify(queue)); }
 function queuePush(id){ if(!syncReady()) return; if(!queue.some(q=>q.id===id)) addQueue({id}); flushQueue(); }
 let flushing=false;
+// 送信待ちから消してよい書類（純粋関数）：サーバーに保存された（skipped でない）うえ、送信中に端末で変わっていないもの
+function flushDone(payload,saved,docsNow){
+  const ok=new Set((saved||[]).filter(x=>x&&x.id&&!x.skipped).map(x=>x.id)); const done=new Set();
+  payload.forEach(p=>{ if(!ok.has(p.id)) return; const d=docsNow.find(x=>x.id===p.id); if(!d||(d.updatedAt||0)===(p.updatedAt||0)) done.add(p.id); });
+  return done;
+}
 async function flushQueue(){
   if(!syncReady()||flushing||!queue.length) return; flushing=true; dot("busy");
   try{
     const ids=queue.filter(q=>q.id).map(q=>q.id); const dels=queue.filter(q=>q.del).map(q=>q.del);
-    const payload=docs.filter(d=>ids.includes(d.id));
-    if(payload.length) await gas({action:"upsert",docs:payload});
+    const payload=docs.filter(d=>ids.includes(d.id)).map(d=>JSON.parse(JSON.stringify(d)));
+    const r=payload.length?await gas({action:"upsert",docs:payload}):{saved:[]};
     for(const id of dels) await gas({action:"delete",id});
-    queue=[]; localStorage.setItem(LS_Q,"[]"); dot("ok"); localStorage.setItem(LS_SYNCED,String(Date.now()));
+    const done=flushDone(payload,(r&&r.saved)||[],docs);
+    queue=queue.filter(q=>!(q.id&&done.has(q.id))&&!(q.del&&dels.includes(q.del))); localStorage.setItem(LS_Q,JSON.stringify(queue)); dot("ok"); localStorage.setItem(LS_SYNCED,String(Date.now()));
   }catch(e){ dot("err"); console.warn("sync failed",e); }
   finally{ flushing=false; }
 }
 // 同期で取り込むときの合わせ方（純粋関数）。サーバー側が新しくても、この端末に未送信の変更がある書類は
-// 端末の内容を残し、入金・失注（AIの set_status などで変わる）だけサーバー側を採る。updatedAt はサーバーより新しくして送り直す
+// 端末の内容を残す。入金済み・失注はどちらかで記録されていれば残す（AIの set_status も、端末で未送信の入金の記録も消さない）。
+// updatedAt はサーバーより新しくして送り直す。ほかの端末やAIの下書き修正の中身は、この場合は端末の内容が優先される
 function mergePulled(local,server,pending){
   if((server.updatedAt||0)<=(local.updatedAt||0)) return {doc:local,kept:false};
   if(!pending) return {doc:server,kept:false};
   const m=Object.assign({},local);
-  ["paid","paidAt","lost"].forEach(k=>{ if(server[k]===undefined) delete m[k]; else m[k]=server[k]; });
+  if(!m.paid&&server.paid){ m.paid=true; if(server.paidAt) m.paidAt=server.paidAt; }
+  if(!m.lost&&server.lost) m.lost=true;
   if(server.pdfUrl&&!m.pdfUrl) m.pdfUrl=server.pdfUrl;
   m.updatedAt=(server.updatedAt||0)+1;
   return {doc:m,kept:true};
 }
 async function pullAll(){
-  if(!syncReady()) return 0; dot("busy");
+  if(!syncReady()) return {n:0,kept:0}; dot("busy");
   const since=0; // 削除反映のため全件取得（件数が増えたら差分化）
   const r=await gas({action:"list",since});
   let n=0, kept=0;
@@ -2447,18 +2456,17 @@ async function pullAll(){
     if(d.deleted){ if(i>=0){ docs.splice(i,1); n++; } continue; }
     if(i<0){ docs.push(d); n++; continue; }
     const m=mergePulled(docs[i],d,pend.has(d.id));
-    if(m.doc!==docs[i]){ docs[i]=m.doc; n++; } if(m.kept) kept++;
+    if(m.kept){ docs[i]=m.doc; kept++; } else if(m.doc!==docs[i]){ docs[i]=m.doc; n++; }
   }
-  if(kept) toast(`この端末の未送信の変更を優先しました（${kept}件）`);
   // サーバーに無い（＝この端末だけにある）書類は送る
   const serverIds=new Set(r.docs.map(d=>d.id));
   docs.filter(d=>!serverIds.has(d.id)).forEach(d=>{ if(!queue.some(q=>q.id===d.id)) addQueue({id:d.id}); });
-  saveDocs(); dot("ok"); return n;
+  saveDocs(); dot("ok"); return {n,kept};
 }
 async function pushSettings(){ try{ await gas({action:"putSettings",settings}); }catch(e){} }
 async function syncAll(manual){
   if(!syncReady()){ if(manual) toast("同期の設定がありません"); return; }
-  try{ const n=await pullAll(); await flushQueue(); if(manual) toast(n?`${n}件を取り込みました`:"同期しました"); if($("#view-list").classList.contains("active")) renderList(); if($("#view-report").classList.contains("active")) renderReport(); if(cur&&!dirty){ const d=docs.find(x=>x.id===cur.id); if(d){ cur=JSON.parse(JSON.stringify(d)); bindEdit(); } } $("#syncInfo").textContent="最終同期："+new Date().toLocaleString("ja-JP"); }
+  try{ const {n,kept}=await pullAll(); await flushQueue(); const kmsg=kept?`この端末の未送信の変更を優先しました（${kept}件）`:""; if(manual) toast([n?`${n}件を取り込みました`:"同期しました",kmsg].filter(x=>x).join("／")); else if(kmsg) toast(kmsg); if($("#view-list").classList.contains("active")) renderList(); if($("#view-report").classList.contains("active")) renderReport(); if(cur&&!dirty){ const d=docs.find(x=>x.id===cur.id); if(d){ cur=JSON.parse(JSON.stringify(d)); bindEdit(); } } $("#syncInfo").textContent="最終同期："+new Date().toLocaleString("ja-JP"); }
   catch(e){ dot("err"); if(manual) alert("同期に失敗しました: "+e.message); }
 }
 $("#btnSyncTest").onclick=async()=>{ settings.gasUrl=$("#s_gasUrl").value.trim(); settings.gasKey=$("#s_gasKey").value.trim(); try{ const r=await gas({action:"ping"}); toast("接続OK"); $("#syncInfo").textContent="接続OK："+r.time; }catch(e){ alert("接続できません: "+e.message+"\nURLとAPIキー、デプロイ設定（全員がアクセス可）を確認してください"); } };
