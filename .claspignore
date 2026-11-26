@@ -1,0 +1,3 @@
+# clasp（GASの自動デプロイ）で送らないファイル。Code.generic.gs は配布用（Code.gs と同じ定数があり、一緒に送るとエラーになる）
+**/Code.generic.gs
+**/*.md

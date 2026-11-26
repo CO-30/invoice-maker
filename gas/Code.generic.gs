@@ -12,6 +12,7 @@
  *
  * シートは自動で作られます：docs（書類）、settings（設定）
  * PDFはスプレッドシートと同じフォルダ内の「見積請求PDF」フォルダに保存されます
+ * AIから操作する場合は、Ai.gs と AiShared.gs も同じプロジェクトに入れ、setupAI を1回実行します（mcp/README.md）
  */
 const API_KEY = "change-me-1234";
 // PDFの保存先（種別ごと）。IDを空にするとスプレッドシートと同じ場所に自動でフォルダを作ります
@@ -37,7 +38,12 @@ function handle_(e){
   try{
     if(e.postData && e.postData.contents) req = JSON.parse(e.postData.contents);
     else req = e.parameter || {};
-  }catch(err){ return out_({ok:false,error:"bad json"}); }
+  }catch(err){ return (e.parameter && e.parameter.ai !== undefined) ? out_({jsonrpc:"2.0",id:null,error:{code:-32700,message:"Parse error"}}) : out_({ok:false,error:"bad json"}); }
+  // AI連携（MCP）：Ai.gs があるときだけ。URL に ?ai=キー を付けて呼ぶ
+  if(typeof isMcp_ === "function"){
+    if(isMcp_(req)) return mcpHandle_(req, e);
+    if(e.parameter && e.parameter.ai !== undefined && !req.action) return mcpInfo_(e);
+  }
   if(req.key !== API_KEY) return out_({ok:false,error:"unauthorized"});
   const lock = LockService.getScriptLock(); lock.waitLock(20000);
   try{
