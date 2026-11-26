@@ -194,5 +194,13 @@ test("削除済みの書類は即保存しない", ()=>{ const ds=[{id:"a",type:
 test("入金済みを外すと入金日も消える形で保存できる", ()=>{ const ds=[{id:"a",type:"invoice",paid:true,paidAt:"2026-11-01"}];
   const r=quickSaveFields(ds,"a","invoice",{paid:false,paidAt:""},5); eq([r.paid,r.paidAt],[false,""]); });
 
+// 同期の合わせ方（v1.15.1）
+const {mergePulled} = extractFns(["mergePulled"]);
+test("同期：サーバーが新しく未送信なしならサーバー側", ()=>{ const L={id:"a",subject:"端末",updatedAt:1}, S={id:"a",subject:"AI",updatedAt:5}; const r=mergePulled(L,S,false); eq([r.doc.subject,r.kept],["AI",false]); });
+test("同期：端末が新しければ端末のまま", ()=>{ const L={id:"a",subject:"端末",updatedAt:9}, S={id:"a",subject:"AI",updatedAt:5}; const r=mergePulled(L,S,true); eq(r.doc===L,true); });
+test("同期：未送信の変更は残し、入金だけサーバー側を採る", ()=>{
+  const L={id:"a",subject:"本人が直した",aiDraft:undefined,updatedAt:3}, S={id:"a",subject:"AI",aiDraft:true,paid:true,paidAt:"2026-11-26",updatedAt:5};
+  const r=mergePulled(L,S,true); eq([r.doc.subject,!!r.doc.aiDraft,r.doc.paid,r.doc.paidAt,r.doc.updatedAt,r.kept],["本人が直した",false,true,"2026-11-26",6,true]); });
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed?1:0);

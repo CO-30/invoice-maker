@@ -30,6 +30,8 @@ const AI_TEMPLATES = {
   lineRem:"{宛名}{敬称}\nお世話になっております。{会社名}の{代表}です。\n{日付}にお送りした{件名}のご請求（{金額}）につきまして、ご入金の確認がまだ取れておりませんでしたのでご連絡いたしました。\n\n{振込先}\n\n行き違いでお支払い済みの場合はご容赦ください。\nご確認のほどよろしくお願いいたします。",
   mailRem:"【お支払いのご確認】{件名}（{会社名}）\n{宛名} {敬称}\n\nいつもお世話になっております。\n{会社名}の{代表}です。\n\n下記のご請求につきまして、ご入金の確認がまだ取れておりませんでしたので、ご確認をお願いいたします。\n\n　請求No.：{No}\n　請求日：{日付}\n　ご請求額：{金額}（税込）\n　お支払期限：{期限}\n\n{振込先}\n\n行き違いでお支払い済みの場合は、ご容赦ください。\n何卒よろしくお願いいたします。\n\n{会社名}　{代表}\nTEL：{電話}"
 };
+// 空にしてよい文字の設定（アプリと同じく "" をそのまま使う。頭文字なしの番号・有効期限なし）
+const AI_KEEP_EMPTY = {prefixEst:true, prefixInv:true, prefixRcp:true, estValid:true};
 const AI_TYPE_NAME = {estimate:"見積書", invoice:"請求書", receipt:"領収書"};
 const AI_STATUS_NAME = {old:"旧版", paid:"入金済", unpaid:"未入金", overdue:"期限超過", won:"受注", lost:"失注", open:"検討中"};
 
@@ -38,8 +40,10 @@ function setupAI(){
   const p = PropertiesService.getScriptProperties();
   let k = p.getProperty("AI_KEY");
   if(!k){ k = Utilities.getUuid().replace(/-/g, ""); p.setProperty("AI_KEY", k); }
-  const url = ScriptApp.getService().getUrl() + "?ai=" + k;
+  const base = String(ScriptApp.getService().getUrl() || "");
+  const url = base + "?ai=" + k;
   Logger.log("AI接続用URL（人に見せないでください）: " + url);
+  if(!/\/exec$/.test(base)) Logger.log("注意：URLの末尾が /exec ではありません。「デプロイを管理」に出るウェブアプリのURL（…/exec）の後ろに ?ai=" + k + " を付けて使ってください");
   return url;
 }
 function resetAIKey(){ PropertiesService.getScriptProperties().deleteProperty("AI_KEY"); return setupAI(); }
@@ -60,10 +64,18 @@ function mcpHandle_(req, e){
   const authed = aiAuthed_(e);
   const batch = Array.isArray(req);
   const msgs = batch ? req : [req];
-  const lock = LockService.getScriptLock(); lock.waitLock(20000);
+  if(batch && !msgs.length) return out_(rpcErr_(null, -32600, "Invalid Request（空の一括）"));
   let res;
-  try{ res = msgs.map(m => mcpOne_(m, authed)).filter(r => r); }
-  finally{ lock.releaseLock(); }
+  if(!authed){ res = msgs.map(m => mcpOne_(m, false)).filter(r => r); } // 認証前はロックを取らない
+  else{
+    const lock = LockService.getScriptLock();
+    if(!lock.tryLock(20000)){
+      res = msgs.filter(m => m && m.id !== undefined).map(m => rpcErr_(m.id, -32603, "ほかの処理が混み合っています。少し待ってもう一度試してください"));
+    }else{
+      try{ res = msgs.map(m => mcpOne_(m, true)).filter(r => r); }
+      finally{ lock.releaseLock(); }
+    }
+  }
   if(!res.length) return ContentService.createTextOutput("").setMimeType(ContentService.MimeType.JSON);
   return out_(batch ? res : res[0]);
 }
@@ -173,7 +185,7 @@ const AI_TOOL_FNS = {
 function aiToday_(){ return Utilities.formatDate(new Date(), "Asia/Tokyo", "yyyy-MM-dd"); }
 function aiAddDays_(iso, n){ const p = iso.split("-").map(Number); const d = new Date(Date.UTC(p[0], p[1]-1, p[2] + (Number(n)||0))); return d.toISOString().slice(0, 10); }
 function aiIsDate_(s){ if(!/^\d{4}-\d{2}-\d{2}$/.test(s)) return false; return aiAddDays_(s, 0) === s; }
-function aiSettings_(){ const s = getSettings_() || {}; const o = {}; Object.keys(AI_DEFAULTS).forEach(k => o[k] = AI_DEFAULTS[k]); Object.keys(s).forEach(k => { if(s[k] !== undefined && s[k] !== null && s[k] !== "") o[k] = s[k]; }); o.salesManual = s.salesManual || {}; return o; }
+function aiSettings_(){ const s = getSettings_() || {}; const o = {}; Object.keys(AI_DEFAULTS).forEach(k => o[k] = AI_DEFAULTS[k]); Object.keys(s).forEach(k => { if(s[k] === undefined || s[k] === null) return; if(s[k] === "" && !AI_KEEP_EMPTY[k]) return; o[k] = s[k]; }); o.salesManual = s.salesManual || {}; return o; }
 function aiAllDocs_(){ return listDocs_(0); }               // 削除済みを含む（番号の採番用）
 function aiDocs_(){ return aiAllDocs_().filter(d => !d.deleted); }
 function aiPrefix_(S, type){ return {estimate:S.prefixEst, invoice:S.prefixInv, receipt:S.prefixRcp}[type] || ""; }

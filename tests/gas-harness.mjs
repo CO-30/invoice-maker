@@ -26,7 +26,7 @@ function fakeSheet(name){
 }
 
 // files: 読み込む .gs（既定は Code.gs＋AiShared.gs＋Ai.gs）。src を渡すとその文字列を使う
-export function loadGas({files=["Code.gs","AiShared.gs","Ai.gs"], src=null, now=null, props={}} = {}){
+export function loadGas({files=["Code.gs","AiShared.gs","Ai.gs"], src=null, now=null, props={}, lockBusy=false, lockCalls=null} = {}){
   const sheets = {};
   const ss = {
     getSheetByName: n => sheets[n] || null,
@@ -45,7 +45,7 @@ export function loadGas({files=["Code.gs","AiShared.gs","Ai.gs"], src=null, now=
     JSON, Math, Number, String, Array, Object, Set, Map, RegExp, Error, Boolean, isNaN, parseInt, parseFloat,
     Date: FakeDate,
     SpreadsheetApp: {getActiveSpreadsheet: () => ss},
-    LockService: {getScriptLock: () => ({waitLock(){}, releaseLock(){}})},
+    LockService: {getScriptLock: () => ({waitLock(){ if(lockBusy) throw new Error("Lock timeout"); }, tryLock(){ if(lockCalls) lockCalls.n++; return !lockBusy; }, releaseLock(){}})},
     ContentService: {
       MimeType: {JSON: "application/json"},
       createTextOutput: s => ({content: s, mime: null, setMimeType(m){ this.mime = m; return this; }})

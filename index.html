@@ -950,6 +950,8 @@ const AI_TEMPLATES = {
   lineRem:"{宛名}{敬称}\nお世話になっております。{会社名}の{代表}です。\n{日付}にお送りした{件名}のご請求（{金額}）につきまして、ご入金の確認がまだ取れておりませんでしたのでご連絡いたしました。\n\n{振込先}\n\n行き違いでお支払い済みの場合はご容赦ください。\nご確認のほどよろしくお願いいたします。",
   mailRem:"【お支払いのご確認】{件名}（{会社名}）\n{宛名} {敬称}\n\nいつもお世話になっております。\n{会社名}の{代表}です。\n\n下記のご請求につきまして、ご入金の確認がまだ取れておりませんでしたので、ご確認をお願いいたします。\n\n　請求No.：{No}\n　請求日：{日付}\n　ご請求額：{金額}（税込）\n　お支払期限：{期限}\n\n{振込先}\n\n行き違いでお支払い済みの場合は、ご容赦ください。\n何卒よろしくお願いいたします。\n\n{会社名}　{代表}\nTEL：{電話}"
 };
+// 空にしてよい文字の設定（アプリと同じく "" をそのまま使う。頭文字なしの番号・有効期限なし）
+const AI_KEEP_EMPTY = {prefixEst:true, prefixInv:true, prefixRcp:true, estValid:true};
 const AI_TYPE_NAME = {estimate:"見積書", invoice:"請求書", receipt:"領収書"};
 const AI_STATUS_NAME = {old:"旧版", paid:"入金済", unpaid:"未入金", overdue:"期限超過", won:"受注", lost:"失注", open:"検討中"};
 
@@ -958,8 +960,10 @@ function setupAI(){
   const p = PropertiesService.getScriptProperties();
   let k = p.getProperty("AI_KEY");
   if(!k){ k = Utilities.getUuid().replace(/-/g, ""); p.setProperty("AI_KEY", k); }
-  const url = ScriptApp.getService().getUrl() + "?ai=" + k;
+  const base = String(ScriptApp.getService().getUrl() || "");
+  const url = base + "?ai=" + k;
   Logger.log("AI接続用URL（人に見せないでください）: " + url);
+  if(!/\/exec$/.test(base)) Logger.log("注意：URLの末尾が /exec ではありません。「デプロイを管理」に出るウェブアプリのURL（…/exec）の後ろに ?ai=" + k + " を付けて使ってください");
   return url;
 }
 function resetAIKey(){ PropertiesService.getScriptProperties().deleteProperty("AI_KEY"); return setupAI(); }
@@ -980,10 +984,18 @@ function mcpHandle_(req, e){
   const authed = aiAuthed_(e);
   const batch = Array.isArray(req);
   const msgs = batch ? req : [req];
-  const lock = LockService.getScriptLock(); lock.waitLock(20000);
+  if(batch && !msgs.length) return out_(rpcErr_(null, -32600, "Invalid Request（空の一括）"));
   let res;
-  try{ res = msgs.map(m => mcpOne_(m, authed)).filter(r => r); }
-  finally{ lock.releaseLock(); }
+  if(!authed){ res = msgs.map(m => mcpOne_(m, false)).filter(r => r); } // 認証前はロックを取らない
+  else{
+    const lock = LockService.getScriptLock();
+    if(!lock.tryLock(20000)){
+      res = msgs.filter(m => m && m.id !== undefined).map(m => rpcErr_(m.id, -32603, "ほかの処理が混み合っています。少し待ってもう一度試してください"));
+    }else{
+      try{ res = msgs.map(m => mcpOne_(m, true)).filter(r => r); }
+      finally{ lock.releaseLock(); }
+    }
+  }
   if(!res.length) return ContentService.createTextOutput("").setMimeType(ContentService.MimeType.JSON);
   return out_(batch ? res : res[0]);
 }
@@ -1093,7 +1105,7 @@ const AI_TOOL_FNS = {
 function aiToday_(){ return Utilities.formatDate(new Date(), "Asia/Tokyo", "yyyy-MM-dd"); }
 function aiAddDays_(iso, n){ const p = iso.split("-").map(Number); const d = new Date(Date.UTC(p[0], p[1]-1, p[2] + (Number(n)||0))); return d.toISOString().slice(0, 10); }
 function aiIsDate_(s){ if(!/^\d{4}-\d{2}-\d{2}$/.test(s)) return false; return aiAddDays_(s, 0) === s; }
-function aiSettings_(){ const s = getSettings_() || {}; const o = {}; Object.keys(AI_DEFAULTS).forEach(k => o[k] = AI_DEFAULTS[k]); Object.keys(s).forEach(k => { if(s[k] !== undefined && s[k] !== null && s[k] !== "") o[k] = s[k]; }); o.salesManual = s.salesManual || {}; return o; }
+function aiSettings_(){ const s = getSettings_() || {}; const o = {}; Object.keys(AI_DEFAULTS).forEach(k => o[k] = AI_DEFAULTS[k]); Object.keys(s).forEach(k => { if(s[k] === undefined || s[k] === null) return; if(s[k] === "" && !AI_KEEP_EMPTY[k]) return; o[k] = s[k]; }); o.salesManual = s.salesManual || {}; return o; }
 function aiAllDocs_(){ return listDocs_(0); }               // 削除済みを含む（番号の採番用）
 function aiDocs_(){ return aiAllDocs_().filter(d => !d.deleted); }
 function aiPrefix_(S, type){ return {estimate:S.prefixEst, invoice:S.prefixInv, receipt:S.prefixRcp}[type] || ""; }
@@ -2413,16 +2425,31 @@ async function flushQueue(){
   }catch(e){ dot("err"); console.warn("sync failed",e); }
   finally{ flushing=false; }
 }
+// 同期で取り込むときの合わせ方（純粋関数）。サーバー側が新しくても、この端末に未送信の変更がある書類は
+// 端末の内容を残し、入金・失注（AIの set_status などで変わる）だけサーバー側を採る。updatedAt はサーバーより新しくして送り直す
+function mergePulled(local,server,pending){
+  if((server.updatedAt||0)<=(local.updatedAt||0)) return {doc:local,kept:false};
+  if(!pending) return {doc:server,kept:false};
+  const m=Object.assign({},local);
+  ["paid","paidAt","lost"].forEach(k=>{ if(server[k]===undefined) delete m[k]; else m[k]=server[k]; });
+  if(server.pdfUrl&&!m.pdfUrl) m.pdfUrl=server.pdfUrl;
+  m.updatedAt=(server.updatedAt||0)+1;
+  return {doc:m,kept:true};
+}
 async function pullAll(){
   if(!syncReady()) return 0; dot("busy");
   const since=0; // 削除反映のため全件取得（件数が増えたら差分化）
   const r=await gas({action:"list",since});
-  let n=0;
+  let n=0, kept=0;
+  const pend=new Set(queue.filter(q=>q.id).map(q=>q.id)); // まだ送っていない（この端末で変更した）書類
   for(const d of r.docs){
     const i=docs.findIndex(x=>x.id===d.id);
     if(d.deleted){ if(i>=0){ docs.splice(i,1); n++; } continue; }
-    if(i<0){ docs.push(d); n++; } else if((d.updatedAt||0)>(docs[i].updatedAt||0)){ docs[i]=d; n++; }
+    if(i<0){ docs.push(d); n++; continue; }
+    const m=mergePulled(docs[i],d,pend.has(d.id));
+    if(m.doc!==docs[i]){ docs[i]=m.doc; n++; } if(m.kept) kept++;
   }
+  if(kept) toast(`この端末の未送信の変更を優先しました（${kept}件）`);
   // サーバーに無い（＝この端末だけにある）書類は送る
   const serverIds=new Set(r.docs.map(d=>d.id));
   docs.filter(d=>!serverIds.has(d.id)).forEach(d=>{ if(!queue.some(q=>q.id===d.id)) addQueue({id:d.id}); });

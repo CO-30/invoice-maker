@@ -292,5 +292,34 @@ test("clasp は Code.generic.gs を送らない", ()=>{
   // Code.gs と AiShared.gs と Ai.gs を同時に読んでも定義の重複がない（上の各テストで確認済み）
 });
 
+// ===== 監査対応（v1.15.1） =====
+test("頭文字・有効期限を空にした設定はそのまま使う（アプリと同じ）", ()=>{
+  const g = env();
+  g.api.putSettings_({prefixEst:"", prefixInv:"", estValid:""});
+  const r = g.call("create_document", {type:"estimate", client:"a", items:[item("清掃", 1000)]});
+  ok(!r.isError, r.text);
+  eq(r.data.document.no, "2611-001");
+  eq(g.doc(r.data.document.id).validText || "", "");
+  const v = g.call("create_document", {type:"invoice", client:"b", items:[item("清掃", 1000)]});
+  eq(v.data.document.no, "2611-002");
+});
+test("空の一括は Invalid Request", ()=>{
+  const g = env();
+  const r = g.post([], {ai: KEY});
+  eq(r.error && r.error.code, -32600);
+});
+test("ロックが取れないときは JSON-RPC のエラー", ()=>{
+  const g = env({lockBusy: true});
+  const r = g.rpc("tools/list", {});
+  eq(r.error && r.error.code, -32603);
+});
+test("認証されていない要求ではロックを取らない", ()=>{
+  const calls = {n: 0};
+  const g = env({lockCalls: calls});
+  const r = g.rpc("tools/list", {}, "wrong");
+  eq(r.error.code, -32001); eq(calls.n, 0);
+  g.rpc("tools/list", {}); eq(calls.n, 1);
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);
