@@ -82,6 +82,7 @@ textarea{min-height:64px;resize:vertical}
 .st.unpaid{color:#92400e}.st.overdue{color:#fff;background:#b91c1c;border-color:#b91c1c}.st.paid{color:#2e7d32}
 .sample-note{background:#fff8eb;border:1px solid #f1d39b;font-size:14px;line-height:1.6}
 .st.dup{color:#b45309;border-style:dashed}.dupg{border:1px solid #f1d39b;background:#fff8eb;border-radius:12px;padding:10px 12px;margin-top:10px}.dupg .h{font-weight:700;font-size:14px}.dupg .rk{cursor:pointer}
+.st.ai{color:#1f2937;border-style:dashed}.ai-note{border:1.5px dashed #1f2937;background:#f8fafc;font-size:14px;line-height:1.6}
 .st.won{color:#2e7d32}.st.lost,.st.old{color:#6b7280}.st.open{color:var(--accent)}
 .paybox{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:10px;padding:10px;border:1px solid var(--line);border-radius:10px;background:#fafafa}
 .paybox label.ck{display:flex;align-items:center;gap:6px;font-size:15px;font-weight:700}
@@ -184,6 +185,7 @@ details.help summary{font-size:13px;color:var(--accent);font-weight:700;cursor:p
 <main>
 <!-- ===== 作成 ===== -->
 <section class="view active" id="view-edit">
+  <div class="card ai-note" id="aiNote" style="display:none">🤖 <b>AIが作った下書き</b>です。宛名・明細・金額を確認して<b>「保存」</b>すると、下書きの印が外れます。PDFは保存してから作ってください。</div>
   <div class="card sample-note" id="sampleNote" style="display:none">⚠ 発行者情報（会社名・住所・振込先など）が<b>見本のまま</b>です。<button class="btn" id="btnGoIssuer" style="margin-top:8px;width:100%">設定で自分の情報に変更する</button></div>
   <div class="card">
     <div class="btnrow" style="margin:0 0 10px"><label class="btn ghost" style="cursor:pointer">📄 既存のPDFから作成<input type="file" id="pdfFile" accept="application/pdf,.pdf" hidden></label></div>
@@ -494,6 +496,7 @@ details.help summary{font-size:13px;color:var(--accent);font-weight:700;cursor:p
     <details><summary>データはどこに保存される？</summary><p>この端末（ブラウザ）の中です。ホーム画面のアイコンを削除すると消えます。設定 → <span class="kbd">JSONで書き出し</span> でバックアップできます。クラウド同期（Googleスプレッドシート）を設定すれば、端末を変えても戻せます。</p></details>
     <details><summary>Googleドライブに自動保存したい</summary><p>設定 → クラウド同期にウェブアプリのURLとAPIキーを入れ、「PDF作成時にGoogleドライブにも保存」をON。見積・請求書・領収書のフォルダに自動で振り分けられます（設置方法はリポジトリの gas/Code.gs 参照）。</p></details>
     <details><summary>社判（角印）の位置を変えたい</summary><p><span class="kbd">プレビュー</span> → <span class="kbd">社判の位置・大きさを調整</span>。置きたい場所をタップすると印が移動し、ドラッグや矢印で細かく合わせられます。大きさは50〜200%。見積書・請求書（明細型領収書）・簡易型領収書でそれぞれ別の位置を覚えます。印は文字の下に押されるので、住所やメールに重なっても文字は隠れません。</p></details>
+    <details><summary>🤖 AIから操作する（Claude など）</summary><p>「先月の〇〇様の見積を請求書にして」「未入金を教えて」「今月の売上は去年と比べてどう？」のように、AIに頼んで書類を作ったり調べたりできます（クラウド同期の設定が必要）。</p><ol><li>Apps Script を最新のコードにする（上の <span class="kbd">プログラムをコピー（Code.gs）</span> にAI用の部分も入っています。貼り直したら「デプロイを管理 → 編集 → 新バージョン」。自動デプロイなら push だけで反映）</li><li>Apps Script のエディタで関数 <span class="kbd">setupAI</span> を選んで ▶実行 → 実行ログに出る「AI接続用URL」をコピー</li><li>Claude の設定のコネクタで「カスタムコネクタを追加」し、そのURLを貼る（パソコンの Claude なら中継 <code>mcp/redseal-mcp.mjs</code> も使えます）</li></ol><p>AIが作った書類は一覧に <span class="st ai" style="margin:0">AI下書き</span> と出ます。内容を確認して「保存」すると印が外れます。PDFの作成・送信はこれまでどおりアプリで行います。AIは書類を削除できず、あなたが作った書類の中身も書き換えません（入金済み・失注の記録だけできます）。URLは合言葉の代わりなので人に教えないでください。漏れたら <span class="kbd">resetAIKey</span>、やめるときは <span class="kbd">disableAI</span> を実行します。</p></details>
     <details><summary>更新のお知らせが出た</summary><p>画面上の「更新する」を押すだけです。保存済みのデータは消えません。</p></details>
   </div>
   <div class="card" id="feedbackCard" style="padding:0;border:0;background:none;box-shadow:none"><div id="feedbackBox"></div></div>
@@ -595,6 +598,7 @@ details.help summary{font-size:13px;color:var(--accent);font-weight:700;cursor:p
  *
  * シートは自動で作られます：docs（書類）、settings（設定）
  * PDFはスプレッドシートと同じフォルダ内の「見積請求PDF」フォルダに保存されます
+ * AIから操作する場合は、Ai.gs と AiShared.gs も同じプロジェクトに入れ、setupAI を1回実行します（mcp/README.md）
  */
 const API_KEY = "change-me-1234";
 // PDFの保存先（種別ごと）。IDを空にするとスプレッドシートと同じ場所に自動でフォルダを作ります
@@ -620,7 +624,12 @@ function handle_(e){
   try{
     if(e.postData && e.postData.contents) req = JSON.parse(e.postData.contents);
     else req = e.parameter || {};
-  }catch(err){ return out_({ok:false,error:"bad json"}); }
+  }catch(err){ return (e.parameter && e.parameter.ai !== undefined) ? out_({jsonrpc:"2.0",id:null,error:{code:-32700,message:"Parse error"}}) : out_({ok:false,error:"bad json"}); }
+  // AI連携（MCP）：Ai.gs があるときだけ。URL に ?ai=キー を付けて呼ぶ
+  if(typeof isMcp_ === "function"){
+    if(isMcp_(req)) return mcpHandle_(req, e);
+    if(e.parameter && e.parameter.ai !== undefined && !req.action) return mcpInfo_(e);
+  }
   if(req.key !== API_KEY) return out_({ok:false,error:"unauthorized"});
   const lock = LockService.getScriptLock(); lock.waitLock(20000);
   try{
@@ -814,6 +823,484 @@ function parseSheet_(sh, fileName){
     memo:"Excelから取込："+fileName+" / "+sh.getName(), imported:true,
     createdAt: date ? new Date(date).getTime() : Date.now(), updatedAt: Date.now()};
 }
+
+/**
+ * REDSEAL AI連携の共通計算（自動生成：node tools/build-gas.mjs）
+ * index.html の同名関数のコピーです。ここは直接直さず、index.html を直してから作り直してください。
+ */
+function calc(d){
+  // taxIn=true（税込で入力）：明細の合計が税込、消費税は内税として逆算
+  const amount=d.items.reduce((a,i)=>a+(+i.qty||0)*(+i.price||0),0);
+  const rate=+d.taxRate||0;
+  const rd=v=>d.rounding==="ceil"?Math.ceil(v):d.rounding==="round"?Math.round(v):Math.floor(v);
+  if(d.taxIn===true){ const tax=rd(amount*rate/(100+rate)); return {sub:amount-tax,tax,total:amount}; }
+  const tax=rd(amount*rate/100);
+  return {sub:amount,tax,total:amount+tax};
+}
+function fyMonths(fy,fyStart){ // 年度の12か月 ["YYYY-MM",…]
+  const st=(+fyStart||1)-1, out=[];
+  for(let i=0;i<12;i++){ const m=st+i, y=fy+Math.floor(m/12); out.push(y+"-"+String(m%12+1).padStart(2,"0")); }
+  return out;
+}
+function caseKey(d){ // 案件のまとまり。Googleドライブ取り込み（id が imp_）は No. から作った仮の案件番号なので使わない
+  return d&&d.base&&!String(d.id||"").startsWith("imp_")?d.base:"";
+}
+function linked(a,b){ // b が a と同じ案件、または a から変換・改訂して作られた
+  return !!(a&&b&&a.id!==b.id&&((caseKey(a)&&caseKey(a)===caseKey(b))||b.fromId===a.id));
+}
+function superseded(d,docs){ // 同じ案件・同じ種別に、より新しい改訂版がある
+  const k=caseKey(d);
+  return !!k&&docs.some(x=>x&&!x.deleted&&x.id!==d.id&&x.type===d.type&&caseKey(x)===k&&(+x.rev||1)>(+d.rev||1));
+}
+function latestDocs(docs){ // 削除を除き、同じ案件・同じ種別は改訂番号が最大の1件だけ
+  const best=new Map();
+  for(const d of docs){
+    if(!d||d.deleted) continue;
+    const k=caseKey(d)?d.type+"|"+caseKey(d):"id|"+d.id;
+    const b=best.get(k);
+    if(!b||(+d.rev||1)>(+b.rev||1)||((+d.rev||1)===(+b.rev||1)&&(+d.updatedAt||0)>(+b.updatedAt||0))) best.set(k,d);
+  }
+  return [...best.values()];
+}
+function salesDocs(docs){ // 売上の対象：請求書＋（対応する請求書が無い）領収書
+  const inv=docs.filter(x=>x&&!x.deleted&&x.type==="invoice");
+  return latestDocs(docs).filter(d=>d.type==="invoice"||(d.type==="receipt"&&!inv.some(i=>linked(i,d)||linked(d,i))));
+}
+function docStatus(d,docs,today){ // invoice: paid/overdue/unpaid/old　estimate: won/lost/open/old
+  if(d.type!=="invoice"&&d.type!=="estimate") return "";
+  if(superseded(d,docs)) return "old";
+  const has=t=>docs.some(x=>x&&!x.deleted&&t.includes(x.type)&&linked(d,x));
+  if(d.type==="invoice"){
+    if(d.paid||has(["receipt"])) return "paid";
+    return d.due&&d.due<today?"overdue":"unpaid";
+  }
+  if(has(["invoice","receipt"])) return "won";
+  return d.lost?"lost":"open";
+}
+function salesStats(docs,opt){
+  const o=Object.assign({fyStart:1,basis:"total",manual:{},defRate:10,today:"",goal:0},opt||{});
+  const rate=+o.defRate||0, key=o.basis==="sub"?"sub":"total";
+  const conv=v=>{ v=+v||0; return key==="sub"?Math.floor(v*100/(100+rate)):v; };
+  const curK=fyMonths(o.fy,o.fyStart), prevK=fyMonths(o.fy-1,o.fyStart);
+  const by={}, sd=salesDocs(docs).filter(d=>d.date&&/^\d{4}-\d{2}/.test(d.date));
+  for(const d of sd){ const k=d.date.slice(0,7); const c=calc(d); (by[k]=by[k]||{amt:0,count:0}); by[k].amt+=c[key]; by[k].count++; }
+  const man=o.manual||{};
+  const months=curK.map((k,i)=>{ const pk=prevK[i];
+    const cur=(by[k]?by[k].amt:0)+conv(man[k]), prev=(by[pk]?by[pk].amt:0)+conv(man[pk]);
+    return {key:k,prevKey:pk,label:(+k.slice(5))+"月",cur,prev,count:by[k]?by[k].count:0,prevCount:by[pk]?by[pk].count:0,manual:+man[k]||0,prevManual:+man[pk]||0,ratio:prev>0?cur/prev:null}; });
+  const sum=(a,f)=>a.reduce((t,x)=>t+f(x),0);
+  const tc=sum(months,m=>m.cur), tp=sum(months,m=>m.prev);
+  const tm=(o.today||"").slice(0,7); let el=0;
+  if(tm){ const i=curK.indexOf(tm); el=i>=0?i+1:(tm>curK[11]?12:0); }
+  const yc=sum(months.slice(0,el),m=>m.cur), yp=sum(months.slice(0,el),m=>m.prev);
+  const target=conv(o.goal);
+  const inFy=sd.filter(d=>curK.includes(d.date.slice(0,7)));
+  const cl={}, it={};
+  for(const d of inFy){ const n=d.client||"（宛名なし）"; (cl[n]=cl[n]||{name:n,amt:0,count:0}); cl[n].amt+=calc(d)[key]; cl[n].count++;
+    for(const x of d.items||[]){ const n2=String(x.desc||"").trim(); if(!n2) continue; const a=(+x.qty||0)*(+x.price||0); (it[n2]=it[n2]||{name:n2,amt:0,qty:0}); it[n2].amt+=a; it[n2].qty+=(+x.qty||0); } }
+  const top=m=>Object.values(m).sort((a,b)=>b.amt-a.amt||a.name.localeCompare(b.name)).slice(0,10);
+  return {months,total:{cur:tc,prev:tp,ratio:tp>0?tc/tp:null},ytd:{months:el,cur:yc,prev:yp,ratio:yp>0?yc/yp:null},
+    goal:{target,ratio:target>0?tc/target:null},clients:top(cl),items:top(it)};
+}
+function receivables(docs,today){ // 未入金の請求書（全期間）
+  const list=salesDocs(docs).map(d=>[d,docStatus(d,docs,today)]).filter(([d,st])=>d.type==="invoice"&&(st==="unpaid"||st==="overdue"))
+    .map(([d,st])=>({id:d.id,no:d.no,client:d.client,subject:d.subject,due:d.due||"",total:calc(d).total,overdue:st==="overdue"}))
+    .sort((a,b)=>(a.due||"9999").localeCompare(b.due||"9999"));
+  const od=list.filter(x=>x.overdue);
+  return {count:list.length,amount:list.reduce((t,x)=>t+x.total,0),overdueCount:od.length,overdueAmount:od.reduce((t,x)=>t+x.total,0),list};
+}
+function estimateStats(docs,fy,fyStart){ // 年度内の見積（各案件の最新版）の受注率
+  const ks=fyMonths(fy,fyStart);
+  const es=latestDocs(docs).filter(d=>d.type==="estimate"&&d.date&&ks.includes(d.date.slice(0,7)));
+  const r={count:es.length,won:0,lost:0,open:0,rate:null};
+  for(const d of es) r[docStatus(d,docs,"")]++;
+  r.rate=r.count?r.won/r.count:null;
+  return r;
+}
+
+/**
+ * REDSEAL AI連携（MCP）
+ *
+ * Claude などのAIから、書類の検索・作成・変換・入金記録・売上集計ができるようにする入口です。
+ * 仕組み：同じウェブアプリのURLに「?ai=キー」を付けたものを、AIの接続先（MCPサーバー）として登録します。
+ *
+ * 設置（1回だけ）
+ * 1. このファイルを Code.gs と同じ Apps Script プロジェクトに入れる（自動デプロイなら gas/ に入っているので不要）
+ * 2. Apps Script のエディタで関数「setupAI」を選んで実行 → 実行ログに「AI接続用URL」が出る
+ * 3. そのURLを Claude のカスタムコネクタ（またはパソコン用の中継 mcp/redseal-mcp.mjs）に登録
+ *    ※ キーはスクリプトのプロパティに保存されます（コードには書かないので、公開リポジトリでも安全）
+ * 作り直し：resetAIKey（古いURLは使えなくなります）／停止：disableAI
+ *
+ * AIにできないこと：書類の削除、本人が作った書類の中身の書き換え、PDFの作成・送信、設定の変更
+ * AIが作った書類には「AI下書き」の印が付き、アプリで確認して保存すると印が外れます。
+ */
+const AI_VERSION = "1.15.0";
+const AI_PROTOCOLS = ["2025-06-18", "2025-03-26", "2024-11-05"];
+const AI_MAX_ROWS = 21; // 帳票の明細行数（index.html の ROWS）
+const AI_DEFAULTS = {company:"", rep:"", tel:"", email:"", bank:"", bankType:"", bankNo:"", bankName:"",
+  taxRate:"10", taxIn:"0", estDays:30, invDays:30, estValid:"御見積後1カ月", prefixEst:"Q", prefixInv:"I", prefixRcp:"R", fyStart:"1", salesGoal:"", presets:""};
+// 送付文面の既定（index.html の DEFAULT_SETTINGS と同じ。設定が同期されていればそちらを使う）
+const AI_TEMPLATES = {
+  lineEst:"{宛名}{敬称}\nお世話になっております。{会社名}の{代表}です。\n{件名}のお見積書をお送りします。\n\n合計：{金額}（税込）\n有効期限：{期限}\n\nご不明な点があればお気軽にご連絡ください。\nよろしくお願いいたします。",
+  lineInv:"{宛名}{敬称}\nお世話になっております。{会社名}の{代表}です。\n{件名}の請求書をお送りします。\n\nご請求額：{金額}（税込）\nお支払期限：{期限}\n\n{振込先}\n\nご確認のほどよろしくお願いいたします。",
+  lineRcp:"{宛名}{敬称}\nお世話になっております。{会社名}の{代表}です。\n{件名}の領収書をお送りします。\n\n領収額：{金額}（税込）\n\nこのたびはありがとうございました。今後ともよろしくお願いいたします。",
+  mailEst:"【お見積書】{件名}（{会社名}）\n{宛名} {敬称}\n\nいつもお世話になっております。\n{会社名}の{代表}です。\n\n{件名}のお見積書を添付にてお送りいたします。\n\n　見積No.：{No}\n　合計金額：{金額}（税込）\n　有効期限：{期限}\n\nご検討のほど、よろしくお願いいたします。\n\n{会社名}　{代表}\nTEL：{電話}",
+  mailInv:"【ご請求書】{件名}（{会社名}）\n{宛名} {敬称}\n\nいつもお世話になっております。\n{会社名}の{代表}です。\n\n{件名}のご請求書を添付にてお送りいたします。\n\n　請求No.：{No}\n　ご請求額：{金額}（税込）\n　お支払期限：{期限}\n\n{振込先}\n\nご確認のほど、よろしくお願いいたします。\n\n{会社名}　{代表}\nTEL：{電話}",
+  mailRcp:"【領収書】{件名}（{会社名}）\n{宛名} {敬称}\n\nいつもお世話になっております。\n{会社名}の{代表}です。\n\n{件名}の領収書を添付にてお送りいたします。\n\n　領収No.：{No}\n　領収額：{金額}（税込）\n\nこのたびはご利用いただきありがとうございました。\n今後ともよろしくお願いいたします。\n\n{会社名}　{代表}\nTEL：{電話}",
+  lineRem:"{宛名}{敬称}\nお世話になっております。{会社名}の{代表}です。\n{日付}にお送りした{件名}のご請求（{金額}）につきまして、ご入金の確認がまだ取れておりませんでしたのでご連絡いたしました。\n\n{振込先}\n\n行き違いでお支払い済みの場合はご容赦ください。\nご確認のほどよろしくお願いいたします。",
+  mailRem:"【お支払いのご確認】{件名}（{会社名}）\n{宛名} {敬称}\n\nいつもお世話になっております。\n{会社名}の{代表}です。\n\n下記のご請求につきまして、ご入金の確認がまだ取れておりませんでしたので、ご確認をお願いいたします。\n\n　請求No.：{No}\n　請求日：{日付}\n　ご請求額：{金額}（税込）\n　お支払期限：{期限}\n\n{振込先}\n\n行き違いでお支払い済みの場合は、ご容赦ください。\n何卒よろしくお願いいたします。\n\n{会社名}　{代表}\nTEL：{電話}"
+};
+const AI_TYPE_NAME = {estimate:"見積書", invoice:"請求書", receipt:"領収書"};
+const AI_STATUS_NAME = {old:"旧版", paid:"入金済", unpaid:"未入金", overdue:"期限超過", won:"受注", lost:"失注", open:"検討中"};
+
+/* ===================== キーの管理（エディタから実行） ===================== */
+function setupAI(){
+  const p = PropertiesService.getScriptProperties();
+  let k = p.getProperty("AI_KEY");
+  if(!k){ k = Utilities.getUuid().replace(/-/g, ""); p.setProperty("AI_KEY", k); }
+  const url = ScriptApp.getService().getUrl() + "?ai=" + k;
+  Logger.log("AI接続用URL（人に見せないでください）: " + url);
+  return url;
+}
+function resetAIKey(){ PropertiesService.getScriptProperties().deleteProperty("AI_KEY"); return setupAI(); }
+function disableAI(){ PropertiesService.getScriptProperties().deleteProperty("AI_KEY"); Logger.log("AI連携を止めました"); }
+function aiAuthed_(e){
+  const k = PropertiesService.getScriptProperties().getProperty("AI_KEY");
+  const given = e && e.parameter && e.parameter.ai;
+  return !!k && typeof given === "string" && given === k;
+}
+
+/* ===================== MCP（JSON-RPC 2.0） ===================== */
+function isMcp_(req){ return Array.isArray(req) || !!(req && req.jsonrpc); }
+function mcpInfo_(e){ // ブラウザでURLを開いたときの確認用
+  if(!aiAuthed_(e)) return out_({ok:false, error:"AIキーが違うか、AI連携が止まっています（setupAI を実行してください）"});
+  return out_({ok:true, server:"redseal", version:AI_VERSION, note:"このURLをAIの接続先（MCP）に登録してください"});
+}
+function mcpHandle_(req, e){
+  const authed = aiAuthed_(e);
+  const batch = Array.isArray(req);
+  const msgs = batch ? req : [req];
+  const lock = LockService.getScriptLock(); lock.waitLock(20000);
+  let res;
+  try{ res = msgs.map(m => mcpOne_(m, authed)).filter(r => r); }
+  finally{ lock.releaseLock(); }
+  if(!res.length) return ContentService.createTextOutput("").setMimeType(ContentService.MimeType.JSON);
+  return out_(batch ? res : res[0]);
+}
+function rpcErr_(id, code, message){ return {jsonrpc:"2.0", id:id, error:{code:code, message:message}}; }
+function mcpOne_(m, authed){
+  const id = m && m.id !== undefined ? m.id : null;
+  if(!m || typeof m !== "object" || m.jsonrpc !== "2.0" || typeof m.method !== "string") return rpcErr_(id, -32600, "Invalid Request");
+  const isNote = m.id === undefined;
+  if(!authed) return isNote ? null : rpcErr_(id, -32001, "AIキーが違うか、AI連携が止まっています（GASで setupAI を実行し、表示されたURLを登録してください）");
+  const p = m.params || {};
+  let result;
+  switch(m.method){
+    case "initialize":
+      result = {protocolVersion: AI_PROTOCOLS.indexOf(p.protocolVersion) >= 0 ? p.protocolVersion : AI_PROTOCOLS[0],
+        capabilities:{tools:{listChanged:false}}, serverInfo:{name:"redseal", title:"REDSEAL 見積・請求・領収", version:AI_VERSION},
+        instructions: AI_INSTRUCTIONS};
+      break;
+    case "ping": result = {}; break;
+    case "tools/list": result = {tools: AI_TOOLS}; break;
+    case "tools/call": result = aiCallTool_(p.name, p.arguments || {}); break;
+    default:
+      if(isNote) return null;
+      return rpcErr_(id, -32601, "Method not found: " + m.method);
+  }
+  return isNote ? null : {jsonrpc:"2.0", id:id, result:result};
+}
+
+const AI_INSTRUCTIONS = "REDSEAL（日本の見積書・請求書・領収書アプリ）のデータです。金額は円・整数。日付は YYYY-MM-DD（日本時間）。" +
+  "書類の種類：estimate=見積書、invoice=請求書、receipt=領収書。案件番号（base）は見積・請求・領収で共通、書類No.は頭文字＋案件番号（改訂は -2…）。" +
+  "流れ：見積→convert_document で請求書→入金後に set_status(paid) か convert_document で領収書。作り直しは revise_document。" +
+  "AIが作った書類は『AI下書き』になり、本人がアプリで確認・保存してからPDFを送ります。AIはPDFを作れず、送信もしません。作成後は必ず本人に『アプリで確認してから送ってください』と伝えてください。" +
+  "削除はできません。本人が作った書類の中身は変更できません（変更したいときは revise_document で改訂版を作る）。";
+
+const AI_ITEMS_SCHEMA = {type:"array", minItems:1, maxItems:AI_MAX_ROWS, description:"明細（最大21行）",
+  items:{type:"object", required:["desc","price"], properties:{
+    desc:{type:"string", description:"品名"}, qty:{type:"number", description:"数量（既定1）"}, unit:{type:"string", description:"単位（式・台・箇所など）"},
+    price:{type:"number", description:"単価（円）。taxIn=true なら税込の単価"}, date:{type:"string", description:"月日など（任意）"}}}};
+const AI_DOC_PROPS = {
+  client:{type:"string", description:"宛名（会社名・氏名）"}, honor:{type:"string", enum:["御中","様",""], description:"敬称（会社は御中、個人は様）"},
+  contact:{type:"string", description:"ご担当（任意）"}, subject:{type:"string", description:"件名"},
+  date:{type:"string", description:"書類の日付 YYYY-MM-DD（既定は今日）"}, due:{type:"string", description:"期限 YYYY-MM-DD（見積は有効期限、請求はお支払期限。既定は設定の日数後）"},
+  validText:{type:"string", description:"見積書の有効期限の文言（例：御見積後1カ月）"}, note:{type:"string", description:"見積書の備考"},
+  items:AI_ITEMS_SCHEMA, taxRate:{type:"string", enum:["10","8","0"], description:"消費税率（既定は設定）"},
+  taxIn:{type:"boolean", description:"true=単価を税込で入力"}, rounding:{type:"string", enum:["floor","round","ceil"], description:"消費税の端数（既定 切り捨て）"},
+  layout:{type:"string", enum:["simple","detail"], description:"領収書の書式（simple=金額のみ、detail=明細あり）"}, memo:{type:"string", description:"社内メモ（帳票には出ない）"}
+};
+function aiProps_(extra){ const o = {}; Object.keys(extra).forEach(k => o[k] = extra[k]); Object.keys(AI_DOC_PROPS).forEach(k => o[k] = AI_DOC_PROPS[k]); return o; }
+const AI_RO = {readOnlyHint:true, destructiveHint:false, openWorldHint:false};
+const AI_RW = {readOnlyHint:false, destructiveHint:false, openWorldHint:false};
+const AI_TOOLS = [
+  {name:"list_documents", title:"書類を探す", annotations:AI_RO,
+    description:"見積書・請求書・領収書の一覧（新しい順）。種類・期間・キーワード（宛名・件名・書類No.・案件番号）・状況で絞り込めます。金額は税込。",
+    inputSchema:{type:"object", properties:{
+      type:{type:"string", enum:["estimate","invoice","receipt"]}, query:{type:"string"},
+      status:{type:"string", enum:["unpaid","overdue","paid","open","won","lost","old","ai_draft"], description:"unpaid=未入金（期限超過を含む）、overdue=期限超過、paid=入金済、open=見積検討中、won=受注、lost=失注、old=旧版、ai_draft=AI下書き"},
+      from:{type:"string", description:"日付の始め YYYY-MM-DD"}, to:{type:"string", description:"日付の終わり YYYY-MM-DD"},
+      limit:{type:"number", description:"最大件数（既定30、最大200）"}}}},
+  {name:"get_document", title:"書類の詳細", annotations:AI_RO,
+    description:"1件の書類の詳細（明細・金額・状況・同じ案件の書類）。id か 書類No.（例 I2611-003）で指定。",
+    inputSchema:{type:"object", properties:{id:{type:"string"}, no:{type:"string"}}}},
+  {name:"create_document", title:"書類を作る", annotations:AI_RW,
+    description:"見積書・請求書・領収書を新しく作ります（AI下書き）。番号・期限は自動。作った後は本人がアプリで確認・保存してからPDFを送ります。",
+    inputSchema:{type:"object", required:["type","client","items"], properties:aiProps_({type:{type:"string", enum:["estimate","invoice","receipt"]}})}},
+  {name:"update_draft", title:"AI下書きを直す", annotations:AI_RW,
+    description:"AIが作った下書き（まだ本人が保存していないもの）の内容を変更します。渡した項目だけ変わります。本人の書類は変更できません（revise_document を使う）。",
+    inputSchema:{type:"object", required:["id"], properties:aiProps_({id:{type:"string"}})}},
+  {name:"convert_document", title:"請求書・領収書に変換", annotations:AI_RW,
+    description:"見積書→請求書、請求書→領収書に変換した新しい書類（AI下書き）を作ります。案件番号を引き継ぎ、日付は今日（date で変更可）。",
+    inputSchema:{type:"object", required:["id"], properties:{id:{type:"string"}, to:{type:"string", enum:["invoice","receipt"], description:"省略時は見積→請求、請求→領収"}, date:{type:"string"}}}},
+  {name:"revise_document", title:"改訂版を作る", annotations:AI_RW,
+    description:"再見積・再発行。元の書類を残したまま、同じ案件の改訂版（No.に -2 など）をAI下書きで作り、渡した項目を変更します。",
+    inputSchema:{type:"object", required:["id"], properties:aiProps_({id:{type:"string"}})}},
+  {name:"set_status", title:"入金済み・失注を記録", annotations:AI_RW,
+    description:"請求書の入金済み（paid、入金日 paidAt は既定で今日）、見積書の失注（lost）を記録します。ほかの内容は変わりません。",
+    inputSchema:{type:"object", required:["id"], properties:{id:{type:"string"}, paid:{type:"boolean"}, paidAt:{type:"string", description:"入金日 YYYY-MM-DD"}, lost:{type:"boolean"}}}},
+  {name:"sales_report", title:"売上集計", annotations:AI_RO,
+    description:"年度の月別売上と前年同月比、年間合計、目標達成率、未入金、取引先別・品目別上位、見積の受注率。請求日で計上（改訂は最新版のみ、請求書の無い領収書も売上）。",
+    inputSchema:{type:"object", properties:{year:{type:"number", description:"年度（既定は今年度）"}, basis:{type:"string", enum:["total","sub"], description:"total=税込（既定）、sub=税抜"}}}},
+  {name:"message_text", title:"送付文面を作る", annotations:AI_RO,
+    description:"書類を送るときの LINE 用・メール用の文面（本人の設定のひな形）。reminder=true で請求書の入金確認の文面。",
+    inputSchema:{type:"object", required:["id","channel"], properties:{id:{type:"string"}, channel:{type:"string", enum:["line","mail"]}, reminder:{type:"boolean"}}}},
+  {name:"get_issuer_info", title:"発行者情報", annotations:AI_RO,
+    description:"発行者（本人）の会社名・連絡先・振込先、税率や期限日数の既定、定型の明細（品名と単価）。",
+    inputSchema:{type:"object", properties:{}}}
+];
+
+/* ===================== ツール本体 ===================== */
+function AiError(msg){ this.message = msg; }
+function aiFail_(msg){ throw new AiError(msg); }
+function aiCallTool_(name, args){
+  const fn = AI_TOOL_FNS[name];
+  if(!fn) return {content:[{type:"text", text:"そのツールはありません: " + name}], isError:true};
+  try{
+    const r = fn(args || {});
+    return {content:[{type:"text", text:(r.message ? r.message + "\n\n" : "") + JSON.stringify(r.data)}], structuredContent:r.data};
+  }catch(err){
+    const msg = err instanceof AiError ? err.message : "内部エラー: " + String(err && err.message || err);
+    return {content:[{type:"text", text:msg}], isError:true};
+  }
+}
+const AI_TOOL_FNS = {
+  list_documents: aiList_, get_document: aiGet_, create_document: aiCreate_, update_draft: aiUpdateDraft_,
+  convert_document: aiConvert_, revise_document: aiRevise_, set_status: aiSetStatus_, sales_report: aiReport_,
+  message_text: aiMessage_, get_issuer_info: aiIssuer_
+};
+
+function aiToday_(){ return Utilities.formatDate(new Date(), "Asia/Tokyo", "yyyy-MM-dd"); }
+function aiAddDays_(iso, n){ const p = iso.split("-").map(Number); const d = new Date(Date.UTC(p[0], p[1]-1, p[2] + (Number(n)||0))); return d.toISOString().slice(0, 10); }
+function aiIsDate_(s){ if(!/^\d{4}-\d{2}-\d{2}$/.test(s)) return false; return aiAddDays_(s, 0) === s; }
+function aiSettings_(){ const s = getSettings_() || {}; const o = {}; Object.keys(AI_DEFAULTS).forEach(k => o[k] = AI_DEFAULTS[k]); Object.keys(s).forEach(k => { if(s[k] !== undefined && s[k] !== null && s[k] !== "") o[k] = s[k]; }); o.salesManual = s.salesManual || {}; return o; }
+function aiAllDocs_(){ return listDocs_(0); }               // 削除済みを含む（番号の採番用）
+function aiDocs_(){ return aiAllDocs_().filter(d => !d.deleted); }
+function aiPrefix_(S, type){ return {estimate:S.prefixEst, invoice:S.prefixInv, receipt:S.prefixRcp}[type] || ""; }
+function aiMakeNo_(S, type, base, rev){ return aiPrefix_(S, type) + base + (rev > 1 ? "-" + rev : ""); }
+function aiNextBase_(all, dateISO){
+  const ym = dateISO.slice(2, 4) + dateISO.slice(5, 7);
+  const used = all.filter(d => d.base && String(d.base).indexOf(ym + "-") === 0).map(d => Number(String(d.base).split("-")[1]) || 0);
+  const n = used.length ? Math.max.apply(null, used) + 1 : 1;
+  return ym + "-" + String(n).padStart(3, "0");
+}
+function aiNextRev_(all, type, base){
+  const r = all.filter(d => d.base === base && d.type === type).map(d => Number(d.rev) || 1);
+  return r.length ? Math.max.apply(null, r) + 1 : 1;
+}
+function aiNewId_(){ return "ai" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
+function aiFind_(docs, args){
+  let d = null;
+  if(args.id) d = docs.find(x => x.id === String(args.id));
+  else if(args.no){ const n = String(args.no).trim().toLowerCase(); d = docs.find(x => String(x.no || "").toLowerCase() === n); }
+  else aiFail_("id か no を指定してください");
+  if(!d) aiFail_("書類が見つかりません: " + (args.id || args.no));
+  return d;
+}
+function aiSummary_(d, docs, today){
+  const c = calc(d);
+  const o = {id:d.id, type:d.type, typeName:AI_TYPE_NAME[d.type] || d.type, no:d.no || "", base:d.base || "", date:d.date || "", due:d.due || "",
+    client:d.client || "", honor:d.honor || "", subject:d.subject || "", sub:c.sub, tax:c.tax, total:c.total};
+  const st = docStatus(d, docs, today); if(st){ o.status = st; o.statusName = AI_STATUS_NAME[st]; }
+  if(d.type === "invoice"){ o.paid = !!d.paid; if(d.paidAt) o.paidAt = d.paidAt; }
+  if(d.aiDraft) o.aiDraft = true;
+  if(d.pdfUrl) o.pdfUrl = d.pdfUrl;
+  return o;
+}
+function aiSave_(d){ d.updatedAt = Date.now(); const r = upsertDoc_(d); if(!r || r.skipped) aiFail_("保存できませんでした（ほかの端末で同時に更新された可能性があります。もう一度試してください）"); return d; }
+
+// 項目の確認と反映（create／update／revise 共通）。partial=true なら渡した項目だけ
+function aiApply_(d, a, partial){
+  const str = (k, max) => { if(a[k] === undefined) return; if(a[k] === null) a[k] = ""; if(typeof a[k] !== "string") aiFail_(k + " は文字で指定してください"); if(a[k].length > (max || 200)) aiFail_(k + " が長すぎます"); d[k] = a[k].trim(); };
+  str("client"); str("contact"); str("subject"); str("validText"); str("note", 1000); str("memo", 1000);
+  if(a.honor !== undefined){ if(["御中","様",""].indexOf(a.honor) < 0) aiFail_("honor は 御中・様・空 のどれかです"); d.honor = a.honor; }
+  ["date","due"].forEach(k => { if(a[k] === undefined) return; if(k === "due" && (a[k] === "" || a[k] === null)){ d.due = ""; return; } if(typeof a[k] !== "string" || !aiIsDate_(a[k])) aiFail_(k + " は YYYY-MM-DD で指定してください"); d[k] = a[k]; });
+  if(a.taxRate !== undefined){ const t = String(a.taxRate); if(["10","8","0"].indexOf(t) < 0) aiFail_("taxRate は 10・8・0 のどれかです"); d.taxRate = t; }
+  if(a.taxIn !== undefined){ if(typeof a.taxIn !== "boolean") aiFail_("taxIn は true/false です"); d.taxIn = a.taxIn; }
+  if(a.rounding !== undefined){ if(["floor","round","ceil"].indexOf(a.rounding) < 0) aiFail_("rounding は floor・round・ceil のどれかです"); d.rounding = a.rounding; }
+  if(a.layout !== undefined){ if(["simple","detail"].indexOf(a.layout) < 0) aiFail_("layout は simple・detail のどちらかです"); d.layout = a.layout; }
+  if(a.items !== undefined){
+    if(!Array.isArray(a.items) || !a.items.length) aiFail_("明細（items）を1行以上指定してください");
+    if(a.items.length > AI_MAX_ROWS) aiFail_("明細は" + AI_MAX_ROWS + "行までです");
+    d.items = a.items.map((x, i) => {
+      if(!x || typeof x !== "object") aiFail_((i+1) + "行目の明細が不正です");
+      const n = (v, def) => { if(v === undefined || v === null || v === "") return def; const z = typeof v === "number" ? v : Number(String(v).replace(/[,，¥円\s]/g, "")); if(!isFinite(z)) aiFail_((i+1) + "行目の数量・単価は数字で指定してください"); return z; };
+      const desc = x.desc == null ? "" : String(x.desc).trim();
+      const price = n(x.price, null);
+      if(!desc && price === null) aiFail_((i+1) + "行目に品名か単価を入れてください");
+      return {date: x.date == null ? "" : String(x.date), desc: desc, qty: n(x.qty, 1), unit: x.unit == null ? "" : String(x.unit), price: price === null ? "" : price};
+    });
+  }
+  if(!partial && !d.client) aiFail_("宛名（client）を入れてください");
+  if(d.client === "" && !d.subject) aiFail_("宛名か件名を入れてください");
+  return d;
+}
+function aiDone_(d, docs, verb){
+  const today = aiToday_();
+  return {message: AI_TYPE_NAME[d.type] + " " + d.no + " を" + verb + "（AI下書き）。アプリの一覧に「AI下書き」と表示されます。本人がアプリで内容を確認・保存してからPDFを作成・送付してください。",
+    data:{document: aiSummary_(d, docs.concat([d]).filter((x, i, a) => a.findIndex(y => y.id === x.id) === i), today)}};
+}
+function aiFresh_(type, S){ // newDoc と同じ既定
+  return {type:type, honor:"御中", contact:"", subject:"", items:[], taxRate:String(S.taxRate || "10"), taxIn:String(S.taxIn) === "1", rounding:"floor",
+    memo:"", layout:"simple", validText: type === "estimate" ? S.estValid : "", note:""};
+}
+function aiStamp_(d, S, all, opt){ // 番号・期限・印
+  const now = Date.now();
+  d.id = aiNewId_(); d.createdAt = now; d.updatedAt = now; d.aiDraft = true; d.aiAt = new Date(now).toISOString();
+  if(!d.date) d.date = aiToday_();
+  if(opt.base){ d.base = opt.base; d.rev = aiNextRev_(all, d.type, d.base); } else { d.base = aiNextBase_(all, d.date); d.rev = 1; }
+  d.no = aiMakeNo_(S, d.type, d.base, d.rev);
+  if(d.type === "receipt") d.due = "";
+  else if(!opt.keepDue || !d.due) d.due = aiAddDays_(d.date, d.type === "invoice" ? S.invDays : S.estDays);
+  ["paid","paidAt","lost","pdfUrl","dupOk","imported","deleted"].forEach(k => delete d[k]);
+  return d;
+}
+
+function aiList_(a){
+  const docs = aiDocs_(), today = aiToday_();
+  if(a.status && ["unpaid","overdue","paid","open","won","lost","old","ai_draft"].indexOf(a.status) < 0) aiFail_("status が不正です");
+  if(a.type && !AI_TYPE_NAME[a.type]) aiFail_("type が不正です");
+  const q = a.query ? String(a.query).trim().toLowerCase() : "";
+  let list = docs.map(d => aiSummary_(d, docs, today)).filter(s => {
+    if(a.type && s.type !== a.type) return false;
+    if(a.from && s.date < a.from) return false;
+    if(a.to && s.date > a.to) return false;
+    if(q && [s.client, s.subject, s.no, s.base].join(" ").toLowerCase().indexOf(q) < 0) return false;
+    if(a.status === "ai_draft") return !!s.aiDraft;
+    if(a.status === "unpaid") return s.status === "unpaid" || s.status === "overdue";
+    if(a.status) return s.status === a.status;
+    return true;
+  });
+  const upd = {}; docs.forEach(d => upd[d.id] = Number(d.updatedAt) || 0);
+  list.sort((x, y) => (y.date || "").localeCompare(x.date || "") || upd[y.id] - upd[x.id]);
+  const limit = Math.min(200, Math.max(1, Number(a.limit) || 30));
+  return {data:{count:list.length, documents:list.slice(0, limit)}};
+}
+function aiGet_(a){
+  const docs = aiDocs_(), today = aiToday_(), d = aiFind_(docs, a);
+  const s = aiSummary_(d, docs, today);
+  ["contact","validText","note","memo","taxRate","taxIn","rounding","layout","rev","fromId"].forEach(k => { if(d[k] !== undefined && d[k] !== "") s[k] = d[k]; });
+  s.items = (d.items || []).filter(x => x.desc || x.price !== "");
+  const related = docs.filter(x => linked(d, x) || linked(x, d)).sort((x, y) => (x.createdAt || 0) - (y.createdAt || 0)).map(x => aiSummary_(x, docs, today));
+  return {data:{document:s, related:related}};
+}
+function aiCreate_(a){
+  if(!AI_TYPE_NAME[a.type]) aiFail_("type は estimate・invoice・receipt のどれかです");
+  if(a.items === undefined) aiFail_("明細（items）を1行以上指定してください");
+  const S = aiSettings_(), all = aiAllDocs_();
+  const d = aiApply_(aiFresh_(a.type, S), a, false);
+  aiStamp_(d, S, all, {keepDue:a.due !== undefined});
+  aiSave_(d);
+  return aiDone_(d, aiDocs_(), "作りました");
+}
+function aiUpdateDraft_(a){
+  const docs = aiDocs_(), d = aiFind_(docs, {id:a.id});
+  if(!d.aiDraft) aiFail_("本人が作った（または確認・保存した）書類は変更できません。作り直す場合は revise_document で改訂版を作ってください");
+  const x = JSON.parse(JSON.stringify(d)); const b = {}; Object.keys(a).forEach(k => { if(k !== "id") b[k] = a[k]; });
+  aiApply_(x, b, true);
+  if(b.date !== undefined && b.due === undefined && x.type !== "receipt"){ const S = aiSettings_(); x.due = aiAddDays_(x.date, x.type === "invoice" ? S.invDays : S.estDays); }
+  aiSave_(x);
+  return aiDone_(x, docs, "直しました");
+}
+function aiConvert_(a){
+  const S = aiSettings_(), all = aiAllDocs_(), docs = all.filter(d => !d.deleted), src = aiFind_(docs, {id:a.id});
+  const to = a.to || (src.type === "estimate" ? "invoice" : src.type === "invoice" ? "receipt" : "");
+  if(!((src.type === "estimate" && (to === "invoice" || to === "receipt")) || (src.type === "invoice" && to === "receipt"))) aiFail_(AI_TYPE_NAME[src.type] + "から" + (AI_TYPE_NAME[to] || "その種類") + "には変換できません（見積→請求・領収、請求→領収）");
+  if(a.date !== undefined && (typeof a.date !== "string" || !aiIsDate_(a.date))) aiFail_("date は YYYY-MM-DD で指定してください");
+  const d = JSON.parse(JSON.stringify(src));
+  d.type = to; d.date = a.date || aiToday_(); d.fromId = src.id;
+  if(!d.base) d.base = aiNextBase_(all, d.date);
+  aiStamp_(d, S, all, {base:d.base});
+  aiSave_(d);
+  return aiDone_(d, docs, "作りました");
+}
+function aiRevise_(a){
+  const S = aiSettings_(), all = aiAllDocs_(), docs = all.filter(d => !d.deleted), src = aiFind_(docs, {id:a.id});
+  const d = JSON.parse(JSON.stringify(src)); const b = {}; Object.keys(a).forEach(k => { if(k !== "id") b[k] = a[k]; });
+  aiApply_(d, b, true);
+  if(b.date === undefined) d.date = aiToday_();
+  d.fromId = src.id;
+  if(!d.base) d.base = aiNextBase_(all, d.date);
+  aiStamp_(d, S, all, {base:d.base, keepDue:b.due !== undefined});
+  aiSave_(d);
+  return aiDone_(d, docs, "作りました（改訂版）");
+}
+function aiSetStatus_(a){
+  const docs = aiDocs_(), d = aiFind_(docs, {id:a.id});
+  if(a.paid === undefined && a.lost === undefined) aiFail_("paid か lost を指定してください");
+  if((a.paid !== undefined || a.paidAt !== undefined) && d.type !== "invoice") aiFail_("入金済みにできるのは請求書だけです");
+  if(a.lost !== undefined && d.type !== "estimate") aiFail_("失注にできるのは見積書だけです");
+  const x = JSON.parse(JSON.stringify(d));
+  if(a.paid !== undefined){
+    if(typeof a.paid !== "boolean") aiFail_("paid は true/false です");
+    x.paid = a.paid;
+    if(a.paid){ if(a.paidAt !== undefined && (typeof a.paidAt !== "string" || !aiIsDate_(a.paidAt))) aiFail_("paidAt は YYYY-MM-DD で指定してください"); x.paidAt = a.paidAt || x.paidAt || aiToday_(); }
+    else x.paidAt = "";
+  }
+  if(a.lost !== undefined){ if(typeof a.lost !== "boolean") aiFail_("lost は true/false です"); x.lost = a.lost; }
+  aiSave_(x);
+  const s = aiSummary_(x, docs.map(y => y.id === x.id ? x : y), aiToday_());
+  return {message: AI_TYPE_NAME[x.type] + " " + x.no + " を「" + (s.statusName || "") + "」にしました。", data:{document:s}};
+}
+function aiReport_(a){
+  const S = aiSettings_(), docs = aiDocs_(), today = aiToday_();
+  const st = Number(S.fyStart) || 1, y = Number(today.slice(0, 4)), m = Number(today.slice(5, 7));
+  const fy = a.year !== undefined ? Number(a.year) : (m >= st ? y : y - 1);
+  if(!isFinite(fy) || fy < 2000 || fy > 2100) aiFail_("year が不正です");
+  const basis = a.basis === "sub" ? "sub" : "total";
+  const s = salesStats(docs, {fy:fy, fyStart:st, basis:basis, manual:S.salesManual || {}, defRate:Number(S.taxRate) || 10, today:today, goal:Number(S.salesGoal) || 0});
+  const months = s.months.map(x => ({key:x.key, label:x.label, cur:x.cur, prev:x.prev, count:x.count, ratio:x.ratio}));
+  return {data:{year:fy, fyStart:st, basis:basis === "sub" ? "税抜" : "税込", months:months, total:s.total, ytd:s.ytd, goal:s.goal,
+    clients:s.clients, items:s.items, receivables:receivables(docs, today), estimates:estimateStats(docs, fy, st)}};
+}
+function aiYen_(n){ return "¥" + String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ","); }
+function aiFmtDate_(d){ if(!d) return ""; const p = String(d).split("-"); return p[0] + "/" + Number(p[1]) + "/" + Number(p[2]); }
+function aiMessage_(a){
+  const docs = aiDocs_(), d = aiFind_(docs, {id:a.id});
+  if(a.channel !== "line" && a.channel !== "mail") aiFail_("channel は line か mail です");
+  if(a.reminder && d.type !== "invoice") aiFail_("入金確認の文面は請求書だけです");
+  const S = aiSettings_(), raw = getSettings_() || {};
+  const key = a.channel + (a.reminder ? "Rem" : {estimate:"Est", invoice:"Inv", receipt:"Rcp"}[d.type]);
+  const tpl = raw[key] || AI_TEMPLATES[key] || "";
+  const c = calc(d);
+  const bank = [S.bank, S.bankType, S.bankNo, S.bankName].filter(Boolean).join("　");
+  const map = {"宛名":d.client, "敬称":d.honor, "件名":d.subject, "金額":aiYen_(c.total), "No":d.no, "日付":aiFmtDate_(d.date),
+    "期限": d.type === "estimate" && d.validText ? d.validText : aiFmtDate_(d.due), "会社名":S.company, "代表":S.rep, "電話":S.tel,
+    "振込先": bank ? "【お振込先】\n" + bank : "", "種別": {estimate:"見積", invoice:"請求", receipt:"領収"}[d.type] + "書"};
+  const text = tpl.replace(/\{([^}]+)\}/g, (m0, k) => map[k] != null ? map[k] : m0);
+  const data = {channel:a.channel, text:text};
+  if(a.channel === "mail"){ const lines = text.split("\n"); data.subject = lines[0]; data.body = lines.slice(1).join("\n"); }
+  return {data:data};
+}
+function aiIssuer_(){
+  const S = aiSettings_();
+  const presets = String(S.presets || "").split("\n").map(l => l.trim()).filter(Boolean).map(l => { const i = l.lastIndexOf(","); const p = i >= 0 ? Number(l.slice(i + 1)) : NaN; return isFinite(p) && i >= 0 ? {desc:l.slice(0, i).trim(), price:p} : {desc:l}; });
+  const pick = ["company","rep","zip","addr1","addr2","tel","fax","email","regno","bank","bankType","bankNo","bankName","taxRate","estDays","invDays","estValid","prefixEst","prefixInv","prefixRcp","fyStart","salesGoal"];
+  const raw = getSettings_() || {}; const o = {};
+  pick.forEach(k => { const v = raw[k] !== undefined && raw[k] !== "" ? raw[k] : AI_DEFAULTS[k]; if(v !== undefined) o[k] = v; });
+  o.taxIn = String(S.taxIn) === "1"; o.presets = presets; o.settingsSynced = !!getSettings_();
+  return {data:o};
+}
 </script>
 <div class="upd" id="upd"><span>新しいバージョンがあります</span><button id="updBtn">更新する</button></div>
 <div class="modal" id="msgModal"><div class="sheet">
@@ -836,7 +1323,7 @@ function parseSheet_(sh, fileName){
 <script src="feedback/feedback-widget.js?v=1.14.0"></script>
 <script>
 /* ============ 定数・既定 ============ */
-const APP_VERSION="1.14.2";
+const APP_VERSION="1.15.0";
 // 要望の受付先（共通の要望受付GASのウェブアプリURL …/exec）。空なら送信欄は「未設定」と表示
 const FEEDBACK_URL="https://script.google.com/macros/s/AKfycbwRiAKzdRhW0SQFyNuoIlGmPQx9rGA199TT0weaKZ-v3-G4nmfdddiot9f45Rs9mSNCQQ/exec";
 const DEFAULT_STAMP = ""; // 社判は利用者が設定で登録する（見本の印は入れない）
@@ -1027,6 +1514,7 @@ function bindEdit(){
   $("#btnConvert").textContent=cur.type==="estimate"?"請求書に変換":"領収書に変換";
   $("#btnRevise").textContent=cur.type==="estimate"?"再見積（改訂版）":"再発行（改訂版）";
   $("#paid").checked=!!cur.paid; $("#paidAt").value=cur.paidAt||""; $("#lost").checked=!!cur.lost;
+  $("#aiNote").style.display=cur.aiDraft?"":"none";
   renderStatus();
   renderRelated();
   renderItems(); renderTotals();
@@ -1135,13 +1623,14 @@ function storeDoc(docs,cur){ // 保存は cur のコピーを docs に入れる�
 function saveCur(silent){
   readEdit();
   if(!cur.client&&!cur.subject){toast("宛名か件名を入力してください");return false;}
+  delete cur.aiDraft; $("#aiNote").style.display="none"; // 本人が確認・保存した＝AI下書きではなくなる
   cur.updatedAt=Date.now();
   storeDoc(docs,cur);
   saveDocs(); dirty=false; if(!silent) toast("保存しました"); queuePush(cur.id); return true;
 }
 $("#btnSave").onclick=()=>saveCur();
 $("#btnNew").onclick=()=>{ if(dirty&&!confirm("保存していない変更があります。破棄して新規作成しますか？")) return; cur=newDoc(cur.type); dirty=false; bindEdit(); showView("edit"); window.scrollTo(0,0); };
-$("#btnDup").onclick=()=>{ readEdit(); const d=JSON.parse(JSON.stringify(cur)); d.id=uid(); delete d.paid; delete d.paidAt; delete d.lost; delete d.pdfUrl; delete d.dupOk; d.date=todayISO(); d.base=nextBase(d.date); d.rev=1; d.no=makeNo(d.type,d.base,1); delete d.fromId; d.createdAt=d.updatedAt=Date.now(); if(d.type!=="receipt") d.due=addDays(d.date,d.type==="invoice"?+settings.invDays:+settings.estDays); cur=d; dirty=true; bindEdit(); toast("複製しました（未保存）"); window.scrollTo(0,0); };
+$("#btnDup").onclick=()=>{ readEdit(); const d=JSON.parse(JSON.stringify(cur)); d.id=uid(); delete d.paid; delete d.paidAt; delete d.lost; delete d.pdfUrl; delete d.dupOk; delete d.aiDraft; d.date=todayISO(); d.base=nextBase(d.date); d.rev=1; d.no=makeNo(d.type,d.base,1); delete d.fromId; d.createdAt=d.updatedAt=Date.now(); if(d.type!=="receipt") d.due=addDays(d.date,d.type==="invoice"?+settings.invDays:+settings.estDays); cur=d; dirty=true; bindEdit(); toast("複製しました（未保存）"); window.scrollTo(0,0); };
 $("#btnConvert").onclick=()=>{ readEdit(); if(!saveCur(true)) return; const d=JSON.parse(JSON.stringify(cur)); delete d.paid; delete d.paidAt; delete d.lost; delete d.pdfUrl; delete d.dupOk; const to=cur.type==="estimate"?"invoice":"receipt"; d.id=uid(); d.type=to; d.date=todayISO(); d.rev=nextRev(to,d.base); d.no=makeNo(to,d.base,d.rev); d.due=to==="invoice"?addDays(d.date,+settings.invDays):""; d.createdAt=d.updatedAt=Date.now(); d.fromId=cur.id; cur=d; dirty=true; bindEdit(); toast((to==="invoice"?"請求書":"領収書")+"を作成しました（未保存）"); window.scrollTo(0,0); };
 $("#btnRevise").onclick=()=>{ readEdit(); if(!saveCur(true)) return; const d=JSON.parse(JSON.stringify(cur)); delete d.paid; delete d.paidAt; delete d.lost; delete d.pdfUrl; d.id=uid(); d.date=todayISO(); d.rev=nextRev(d.type,d.base); d.no=makeNo(d.type,d.base,d.rev); if(d.type!=="receipt") d.due=addDays(d.date,d.type==="invoice"?+settings.invDays:+settings.estDays); d.createdAt=d.updatedAt=Date.now(); d.fromId=cur.id; cur=d; dirty=true; bindEdit(); toast("改訂版 "+d.no+" を作成しました（未保存）"); window.scrollTo(0,0); };
 $("#btnDelete").onclick=()=>{ if(!confirm("この書類を削除しますか？")) return; const id=cur.id; docs=docs.filter(d=>d.id!==id); saveDocs(); cur=newDoc(cur.type); dirty=false; bindEdit(); toast("削除しました"); if(syncReady()) gas({action:"delete",id}).catch(()=>{ addQueue({del:id}); }); };
@@ -1744,7 +2233,7 @@ function renderList(){
   if(!list.length){host.innerHTML=`<p class="muted" style="text-align:center;padding:24px 0">書類はまだありません</p>`;return;}
   host.innerHTML=list.map(d=>{const c=calc(d);const T=TYPES[d.type];return `<div class="doc" data-id="${d.id}">
     <span class="pill ${d.type==="invoice"?"inv":d.type==="receipt"?"rcp":""}">${T.pill}</span>
-    <div class="body"><div class="t">${esc(d.client||"（宛名なし）")}${(st=>st?`<span class="st ${st}">${ST_LABEL[st]}</span>`:"")(docStatus(d,docs,today))}${dupIds.has(d.id)?`<span class="st dup">重複？</span>`:""}</div><div class="s">${esc(d.no)}　${esc(d.subject)}　${fmtDate(d.date)}</div></div>
+    <div class="body"><div class="t">${esc(d.client||"（宛名なし）")}${(st=>st?`<span class="st ${st}">${ST_LABEL[st]}</span>`:"")(docStatus(d,docs,today))}${dupIds.has(d.id)?`<span class="st dup">重複？</span>`:""}${d.aiDraft?`<span class="st ai">AI下書き</span>`:""}</div><div class="s">${esc(d.no)}　${esc(d.subject)}　${fmtDate(d.date)}</div></div>
     <div class="m">${yen(c.total)}</div></div>`;}).join("");
   host.querySelectorAll(".doc").forEach(el=>el.onclick=()=>openDoc(el.dataset.id));
 }

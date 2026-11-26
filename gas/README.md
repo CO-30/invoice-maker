@@ -11,3 +11,6 @@
    - `SCRIPT_ID` … 2
    - `DEPLOYMENT_ID` … 3
 以後、gas/ を変更して push すると自動で反映されます（Actions タブで結果確認）。
+Code.generic.gs（配布用）は .claspignore で送らない設定です。
+
+AIから操作する設定は mcp/README.md を参照（エディタで setupAI を1回実行）。
