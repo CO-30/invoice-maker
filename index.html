@@ -578,13 +578,15 @@ details.help summary{font-size:13px;color:var(--accent);font-weight:700;cursor:p
     <label class="f">APIのベースURL</label><input type="url" id="x_base" placeholder="https://redseal-api.〇〇.workers.dev" autocapitalize="off" autocorrect="off">
     <label class="f">管理トークン（ADMIN_TOKEN）</label><input type="password" id="x_admin" autocomplete="off">
     <label class="f">新しいキーの名前</label><input type="text" id="x_name" placeholder="Muse">
-    <label class="f">権限</label><select id="x_scope"><option value="read">読み取り専用</option><option value="write">読み書き</option></select>
+    <label class="f">権限</label><select id="x_scope"><option value="draft">下書きまで（参照＋AI下書きの作成・編集・削除）</option><option value="read">読み取り専用</option><option value="write">すべて（入金・失注の記録も可）</option></select>
     <div class="btnrow"><button class="btn" id="x_issue">キーを発行</button><button class="btn secondary" id="x_reload">一覧を表示</button></div>
     <div id="x_secret" style="display:none;border:2px dashed currentColor;border-radius:8px;padding:10px;margin-top:10px">
       <b id="x_secretTitle"></b><p class="hint">この画面を閉じると二度と表示できません。</p>
       <input type="text" id="x_secretVal" readonly><div class="btnrow"><button class="btn sm" id="x_copy">コピー</button><button class="btn sm ghost" id="x_hide">閉じる</button></div>
     </div>
     <div id="x_keys"></div>
+    <div class="btnrow"><button class="btn ghost" id="x_muse">Muse に渡す文を作る</button></div>
+    <textarea id="x_museText" readonly style="display:none;min-height:220px"></textarea>
     <details class="help"><summary>Webhook（変更の通知先）</summary>
       <label class="f">通知先URL（https）</label><input type="url" id="x_hookUrl" placeholder="https://..." autocapitalize="off" autocorrect="off">
       <div class="btnrow"><button class="btn sm" id="x_hookAdd">登録</button><button class="btn sm secondary" id="x_hookReload">一覧を表示</button></div>
@@ -1238,7 +1240,7 @@ function aiGet_(a){
   return {data:{document:s, related:related}};
 }
 function aiCreate_(a){
-  if(!AI_TYPE_NAME[a.type]) aiFail_("type は estimate・invoice・receipt のどれかです");
+  if(["estimate","invoice","receipt"].indexOf(a.type) < 0) aiFail_("type は estimate・invoice・receipt のどれかです"); // 配列などは受け付けない
   if(a.items === undefined) aiFail_("明細（items）を1行以上指定してください");
   const S = aiSettings_(), all = aiAllDocs_();
   const d = aiApply_(aiFresh_(a.type, S), a, false);
@@ -1417,6 +1419,38 @@ function apiList_(a){
   const offset = Number(a.offset) || 0, limit = Number(a.limit) || 30;
   return {total:list.length, documents:list.slice(offset, offset + limit)};
 }
+// 「下書きまで」のキー用の制限。入金の状態を変える操作と、本人が記録を付けた下書きの変更を止める
+function apiDraftGuard_(op, a){
+  const deny = m => aiFail_(m + "。このキーは下書きの範囲だけです。アプリで本人が操作してください", "forbidden_for_scope");
+  if(op === "status") deny("入金・失注は記録できません");
+  const receipt = "領収書は扱えません（下書きでも元の請求書が入金済みになるため）";
+  if(op === "create"){ if(a.type === "receipt") deny(receipt); return; }
+  const docs = aiDocs_(), d = aiFind_(docs, {id:a.id});
+  if(d.type === "receipt") deny(receipt);
+  if(op === "convert" && (a.to === "receipt" || (!a.to && d.type === "invoice"))) deny(receipt);
+  if(op === "convert" || op === "revise"){
+    // 新しい版は同じ案件番号を引き継ぐ。旧版や取込書類も含めて、案件全体の記録を調べる
+    const same = x => x.id === d.id || (!!d.base && x.base === d.base) || x.fromId === d.id;
+    const group = docs.filter(same);
+    const makesInvoice = op === "convert" ? d.type === "estimate" : d.type === "invoice";
+    if(makesInvoice && group.some(x => x.type === "invoice" && (x.paid || docs.some(r => r.type === "receipt" && (linked(x, r) || linked(r, x))))))
+      deny("入金済みの請求書がある案件には、請求書の版を追加できません");
+    if(makesInvoice && group.some(x => x.type === "receipt")) deny("領収書がある案件には、請求書の版を追加できません");
+    if(d.type === "estimate" && group.some(x => x.type === "estimate" && x.lost)) deny("失注にした見積は、変換・改訂できません");
+  }
+  if((op === "update" || op === "delete") && d.aiDraft && (d.paid || d.lost || d.pdfUrl)) deny("入金・失注の記録やPDFがある下書きは変えられません");
+}
+// 「下書きまで」のキーの要求は draft_ で始まる op で届く（この制限を知らない古いGASでは失敗する）
+function apiGuarded_(op, fn){ return a => { apiDraftGuard_(op, a); return fn(a); }; }
+const API_TOOL_OPS = {create_document:"create", update_draft:"update", convert_document:"convert", revise_document:"revise", set_status:"status"};
+function apiCall_(a, draftOnly){
+  const name = String(a.name || ""), args = a.arguments || {};
+  if(draftOnly && Object.prototype.hasOwnProperty.call(API_TOOL_OPS, name)){
+    try{ apiDraftGuard_(API_TOOL_OPS[name], args); }
+    catch(err){ if(err instanceof AiError) return {content:[{type:"text", text:err.message}], isError:true}; throw err; }
+  }
+  return aiCallTool_(name, args);
+}
 function apiDelete_(a){
   const r = apiById_(a.id), d = r.d;
   if(!d.aiDraft) aiFail_("削除できるのはAI下書きだけです。本人が作った（または確認・保存した）書類はアプリで本人が削除してください", "not_editable");
@@ -1453,8 +1487,10 @@ const API_OPS = {
   issuer: () => aiIssuer_().data,
   snapshot: () => ({documents:aiAllDocs_().map(d => ({id:d.id, type:d.type || "", no:d.no || "", updatedAt:Number(d.updatedAt) || 0, deleted:!!d.deleted}))}),
   tools: () => ({tools:AI_TOOLS, instructions:AI_INSTRUCTIONS, version:AI_VERSION}),
-  call: a => aiCallTool_(String(a.name || ""), a.arguments || {})
+  call: a => apiCall_(a, false),
+  draft_call: a => apiCall_(a, true)
 };
+["create","update","convert","revise","delete"].forEach(op => API_OPS["draft_" + op] = apiGuarded_(op, API_OPS[op]));
 </script>
 <div class="upd" id="upd"><span>新しいバージョンがあります</span><button id="updBtn">更新する</button></div>
 <div class="modal" id="msgModal"><div class="sheet">
@@ -2651,8 +2687,9 @@ loadStampRatio(); migrateStamp(); updateSampleNote();
   const g=id=>document.getElementById(id);
   const BASE_KEY="qim_ext_api_base";
   try{ g("x_base").value=localStorage.getItem(BASE_KEY)||""; }catch(e){}
+  const rootUrl=()=>g("x_base").value.trim().replace(/\/+$/,"").replace(/\/api\/v1$/,"");
   async function api(method,path,body){
-    const base=g("x_base").value.trim().replace(/\/+$/,""), token=g("x_admin").value.trim();
+    const base=rootUrl(), token=g("x_admin").value.trim();
     if(!/^https:\/\/[^?#]+$/.test(base)&&!/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(base)) throw new Error("ベースURLは https:// で始めてください");
     if(!token) throw new Error("管理トークンを入れてください");
     const r=await fetch(base+path,{method,headers:Object.assign({Authorization:"Bearer "+token},body?{"Content-Type":"application/json"}:{}),body:body?JSON.stringify(body):undefined});
@@ -2677,7 +2714,7 @@ loadStampRatio(); migrateStamp(); updateSampleNote();
     const list=await api("GET","/api/v1/keys"), box=g("x_keys"); box.textContent="";
     if(!list.length) box.appendChild(el("p","キーはまだありません","hint"));
     list.slice().reverse().forEach(k=>row(box,
-      [(k.revoked_at?"【無効】":"【有効】")+k.name, (k.scope==="write"?"読み書き":"読み取り専用")+"／先頭 "+k.prefix+"…／最後に使った日 "+day(k.last_used_at)],
+      [(k.revoked_at?"【無効】":"【有効】")+k.name, ({read:"読み取り専用",draft:"下書きまで",write:"すべて"}[k.scope]||k.scope)+"／先頭 "+k.prefix+"…／最後に使った日 "+day(k.last_used_at)],
       k.revoked_at?[]:[["再発行","secondary",async()=>{ if(!confirm("「"+k.name+"」を再発行しますか？古いキーはすぐ使えなくなります。")) return; const n=await api("POST","/api/v1/keys/"+k.id+"/rotate"); showSecret("再発行したキー："+n.name,n.key); await keys(); }],
         ["無効化","danger",async()=>{ if(!confirm("「"+k.name+"」を無効にしますか？")) return; await api("DELETE","/api/v1/keys/"+k.id); hideSecret(); await keys(); }]]));
   }
@@ -2694,6 +2731,23 @@ loadStampRatio(); migrateStamp(); updateSampleNote();
     finally{ g("x_issue").disabled=false; }
   });
   g("x_reload").onclick=run(keys);
+  // 実際につながったURLだけを文にする。キーと管理トークンは入れない
+  g("x_muse").onclick=run(async()=>{
+    const root=rootUrl();
+    if(!/^https:\/\/[^\/?#@<>〇\s]+$/.test(root)) throw new Error("ベースURLに実際の https のURLを入れてください");
+    const r=await fetch(root+"/api/v1/health").then(x=>x.json()).catch(()=>null);
+    if(!r||!r.data||r.data.status!=="ok") throw new Error("このURLのAPIにつながりません。設置とURLを確認してください");
+    if(!r.data.data_source_configured) throw new Error("APIは動いていますが、GAS_URL と GAS_BRIDGE_KEY が未設定です");
+    try{ localStorage.setItem(BASE_KEY,root); }catch(e){}
+    const base=root+"/api/v1", t=g("x_museText");
+    t.value=["ベースURL："+base,"仕様書URL："+root+"/openapi.json","認証：Authorization: Bearer <キー>（キーは秘密情報欄で渡すため、ここには書かない）",
+      "キー発行手順：REDSEAL の設定 → 外部連携（APIキー）→ ベースURLと管理トークンを入力 → 名前「Muse」と権限を選ぶ →「キーを発行」→ 表示されたキーを Muse の秘密情報欄に直接入力（表示は1回だけ）",
+      "選択する権限：下書きまで（documents:read、documents:draft）",
+      'テスト：curl -i "'+base+'/me" -H "Authorization: Bearer <キー>" で 200 と scopes が返ること',
+      "注意：REST の書き込みは Idempotency-Key 必須（/mcp は非対応なので書き込みは REST を使う）。AIが作るのは下書きまでで、送信は本人がアプリで確認してから。領収書と入金・失注の記録は不可。"].join("\n");
+    t.style.display="";
+    try{ await navigator.clipboard.writeText(t.value); alert("コピーしました"); }catch(e){ t.select(); }
+  });
   g("x_hookReload").onclick=run(hooks);
   g("x_hookAdd").onclick=run(async()=>{ g("x_hookAdd").disabled=true; try{ const h=await api("POST","/api/v1/webhooks",{url:g("x_hookUrl").value.trim()}); showSecret("Webhook の署名用シークレット",h.secret); g("x_hookUrl").value=""; await hooks(); } finally{ g("x_hookAdd").disabled=false; } });
   // 別の画面に移ったら、表示中のキーと管理トークンを消す

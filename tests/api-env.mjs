@@ -34,8 +34,10 @@ export function makeEnv(opts={}){
     return new Response("", {status:t.hookStatus});
   };
   t.env = env; t.fetcher = fetcher;
-  t.req = async (method, path, {key, headers={}, body, base="https://api.example.com"}={}) => {
+  let seq = 0;
+  t.req = async (method, path, {key, headers={}, body, base="https://api.example.com", noIdem}={}) => {
     const h = {...headers}; if(key) h.Authorization = "Bearer " + key;
+    if(!noIdem && method !== "GET" && path.startsWith("/api/v1/documents") && !h["Idempotency-Key"]) h["Idempotency-Key"] = "auto-" + (++seq);
     const res = await handle(new Request(base + path, {method, headers:h, body: body === undefined ? undefined : typeof body === "string" ? body : JSON.stringify(body)}),
       {env, store, fetcher, spec, now:()=>clock.t, waitUntil:p=>pending.push(p)});
     while(pending.length) await pending.shift();

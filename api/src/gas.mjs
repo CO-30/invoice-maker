@@ -1,7 +1,7 @@
 // GAS（gas/Api.gs）を呼ぶ。キーは本文で送る。書き込みの結果が分からない失敗は unknown=true
 import { ApiError } from "./util.mjs";
 
-const MAP = { not_found: 404, validation_error: 422, not_editable: 409, conflict: 409, busy: 503 };
+const MAP = { not_found: 404, validation_error: 422, not_editable: 409, forbidden_for_scope: 403, conflict: 409, busy: 503 };
 
 export function makeGas(env, fetcher) {
   return async function gas(op, args = {}) {

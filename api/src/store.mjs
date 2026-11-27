@@ -2,7 +2,9 @@
 // storage は Durable Object の ctx.storage（get / put / delete / list）。
 import { sha256, randomToken, iso } from "./util.mjs";
 
-export const SCOPES = { read: ["documents:read"], write: ["documents:read", "documents:write"] };
+// draft＝参照＋AI下書きの作成・編集・削除（入金・失注の記録は不可）／write＝すべて
+export const SCOPES = { read: ["documents:read"], draft: ["documents:read", "documents:draft"],
+  write: ["documents:read", "documents:draft", "documents:write"] };
 export const EVENTS = ["document.created", "document.updated", "document.deleted"];
 const MAX_KEYS = 20, MAX_HOOKS = 5, MAX_ATTEMPTS = 6, IDEM_TTL = 24 * 3600e3, LEASE = 120e3, PENDING_TTL = 3 * 60e3;
 

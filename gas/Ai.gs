@@ -297,7 +297,7 @@ function aiGet_(a){
   return {data:{document:s, related:related}};
 }
 function aiCreate_(a){
-  if(!AI_TYPE_NAME[a.type]) aiFail_("type は estimate・invoice・receipt のどれかです");
+  if(["estimate","invoice","receipt"].indexOf(a.type) < 0) aiFail_("type は estimate・invoice・receipt のどれかです"); // 配列などは受け付けない
   if(a.items === undefined) aiFail_("明細（items）を1行以上指定してください");
   const S = aiSettings_(), all = aiAllDocs_();
   const d = aiApply_(aiFresh_(a.type, S), a, false);

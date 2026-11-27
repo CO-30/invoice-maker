@@ -34,7 +34,7 @@ const docProps = {
   ai_draft:{type:"boolean", description:"AI下書き（本人が未確認）。true の書類だけ変更・削除できる"}, pdf_url:nul("string"), deleted:{type:"boolean"},
   created_at:str("UTC",{format:"date-time"}), updated_at:str("UTC。アプリで保存した書類は端末で保存した時刻",{format:"date-time"})
 };
-const keyProps = {id:str(), name:str(), scope:str(null,{enum:["read","write"]}), prefix:str("キーの先頭（見分け用）"),
+const keyProps = {id:str(), name:str(), scope:str(null,{enum:["read","draft","write"]}), prefix:str("キーの先頭（見分け用）"),
   created_at:str(null,{format:"date-time"}), updated_at:str(null,{format:"date-time"}), last_used_at:nul("string",{format:"date-time"}), revoked_at:nul("string",{format:"date-time"})};
 const hookProps = {id:str(), url:str(null,{format:"uri"}), events:arr(str(null,{enum:EVENTS})), created_at:str(null,{format:"date-time"}),
   updated_at:str(null,{format:"date-time"}), last_status:nul("integer"), last_delivery_at:nul("string",{format:"date-time"})};
@@ -42,7 +42,7 @@ const hookProps = {id:str(), url:str(null,{format:"uri"}), events:arr(str(null,{
 const ERR = {400:"BadRequest",401:"Unauthorized",403:"Forbidden",404:"NotFound",405:"MethodNotAllowed",409:"Conflict",413:"TooLarge",422:"Invalid",429:"RateLimited",500:"Internal",502:"BadGateway",503:"Unavailable",504:"Timeout"};
 const errs = codes => Object.fromEntries(codes.map(c => [c, {$ref:"#/components/responses/"+ERR[c]}]));
 const idParam = {name:"id", in:"path", required:true, schema:{type:"string"}};
-const idem = {name:"Idempotency-Key", in:"header", required:false, schema:{type:"string", maxLength:200}, description:"任意（推奨）。24時間、同じキー・同じ内容の再送には前の応答を返す"};
+const idem = {name:"Idempotency-Key", in:"header", required:true, schema:{type:"string", maxLength:200}, description:"必須。依頼ごとに新しい値。24時間、同じキー・同じ内容の再送には前の応答を返す"};
 
 const paths = {};
 function op(method, path, {id, summary, scope, admin, open, params=[], req, ok, status=200, write}){
@@ -62,7 +62,7 @@ function op(method, path, {id, summary, scope, admin, open, params=[], req, ok, 
     ...(req?{requestBody:req}:{}),
     responses:{[status]:jsonRes("成功", ok), ...errs([...new Set(codes)].sort())}};
 }
-const R="documents:read", W="documents:write";
+const R="documents:read", D="documents:draft", W="documents:write";
 const one = data(ref("Document"));
 op("get","/api/v1/health",{id:"getHealth",summary:"稼働確認",open:true,ok:data(obj({status:str(),version:str(),time:str(null,{format:"date-time"}),data_source_configured:{type:"boolean"}}))});
 op("get","/api/v1/me",{id:"getMe",summary:"認証確認",scope:R,ok:data(obj({auth_type:str(),key_id:str(),name:str(),scopes:arr(str())}))});
@@ -73,18 +73,18 @@ op("get","/api/v1/documents",{id:"listDocuments",summary:"書類の一覧・検�
   q("include_deleted",{type:"boolean"},"削除済み（deleted:true）も返す。updated_since があるときの既定は true"),
   q("limit",{type:"integer",minimum:1,maximum:200,default:30}), q("offset",{type:"integer",minimum:0,default:0})],
   ok:obj({data:arr(ref("Document")),pagination:obj({limit:{type:"integer"},offset:{type:"integer"},total:{type:"integer"}})},["data","pagination"])});
-op("post","/api/v1/documents",{id:"createDocument",summary:"書類を作る（AI下書き）",scope:W,write:true,req:body(ref("DocumentCreate")),ok:one,status:201});
+op("post","/api/v1/documents",{id:"createDocument",summary:"書類を作る（AI下書き）",scope:D,write:true,req:body(ref("DocumentCreate")),ok:one,status:201});
 op("get","/api/v1/documents/{id}",{id:"getDocument",summary:"書類の詳細（明細・同じ案件の書類）",scope:R,ok:one});
-op("patch","/api/v1/documents/{id}",{id:"updateDocument",summary:"AI下書きを直す（本人の書類は 409）",scope:W,write:true,req:body(ref("DocumentUpdate")),ok:one});
-op("delete","/api/v1/documents/{id}",{id:"deleteDocument",summary:"AI下書きを削除（本人の書類・入金や失注の記録・PDFがある下書きは 409）",scope:W,write:true,ok:data(obj({id:str(),deleted:{type:"boolean"},updated_at:str(null,{format:"date-time"})}))});
-op("post","/api/v1/documents/{id}/convert",{id:"convertDocument",summary:"見積→請求・領収、請求→領収（本文は {} でも可）",scope:W,write:true,req:{...body(obj({to:str(null,{enum:["invoice","receipt"]}),date:str(null,{format:"date"})},null,{additionalProperties:false})),required:false},ok:one,status:201});
-op("post","/api/v1/documents/{id}/revise",{id:"reviseDocument",summary:"改訂版を作る（渡した項目だけ変える）",scope:W,write:true,req:body(ref("DocumentUpdate")),ok:one,status:201});
+op("patch","/api/v1/documents/{id}",{id:"updateDocument",summary:"AI下書きを直す（本人の書類は 409）",scope:D,write:true,req:body(ref("DocumentUpdate")),ok:one});
+op("delete","/api/v1/documents/{id}",{id:"deleteDocument",summary:"AI下書きを削除（本人の書類・入金や失注の記録・PDFがある下書きは 409）",scope:D,write:true,ok:data(obj({id:str(),deleted:{type:"boolean"},updated_at:str(null,{format:"date-time"})}))});
+op("post","/api/v1/documents/{id}/convert",{id:"convertDocument",summary:"見積→請求・領収、請求→領収（本文は {} でも可）",scope:D,write:true,req:{...body(obj({to:str(null,{enum:["invoice","receipt"]}),date:str(null,{format:"date"})},null,{additionalProperties:false})),required:false},ok:one,status:201});
+op("post","/api/v1/documents/{id}/revise",{id:"reviseDocument",summary:"改訂版を作る（渡した項目だけ変える）",scope:D,write:true,req:body(ref("DocumentUpdate")),ok:one,status:201});
 op("post","/api/v1/documents/{id}/status",{id:"setDocumentStatus",summary:"入金済み（請求書）・失注（見積書）の記録",scope:W,write:true,req:body(obj({paid:{type:"boolean"},paid_at:str(null,{format:"date"}),lost:{type:"boolean"}},null,{additionalProperties:false,minProperties:1})),ok:one});
 op("get","/api/v1/documents/{id}/message",{id:"getMessageText",summary:"送付文面（LINE・メール）",scope:R,params:[q("channel",str(null,{enum:["line","mail"],default:"line"})),q("reminder",{type:"boolean"},"請求書の入金確認の文面")],ok:data(obj({channel:str(),text:str(),subject:str(),body:str()}))});
 op("get","/api/v1/reports/sales",{id:"getSalesReport",summary:"売上集計（前年同月比・未入金・受注率）",scope:R,params:[q("year",{type:"integer",minimum:2000,maximum:2100}),q("basis",str(null,{enum:["total","sub"]}))],ok:data({type:"object",additionalProperties:true})});
 op("get","/api/v1/issuer",{id:"getIssuer",summary:"発行者情報（振込先を含む）と定型明細",scope:R,ok:data({type:"object",additionalProperties:true})});
 op("get","/api/v1/keys",{id:"listApiKeys",summary:"APIキーの一覧",admin:true,ok:data(arr(ref("ApiKey")))});
-op("post","/api/v1/keys",{id:"createApiKey",summary:"APIキーを発行（key は今回だけ表示）",admin:true,req:body(obj({name:str(null,{minLength:1,maxLength:60}),scope:str(null,{enum:["read","write"]})},["name","scope"])),ok:data(ref("ApiKeyWithSecret")),status:201});
+op("post","/api/v1/keys",{id:"createApiKey",summary:"APIキーを発行（key は今回だけ表示）",admin:true,req:body(obj({name:str(null,{minLength:1,maxLength:60}),scope:str(null,{enum:["read","draft","write"]})},["name","scope"])),ok:data(ref("ApiKeyWithSecret")),status:201});
 op("post","/api/v1/keys/{id}/rotate",{id:"rotateApiKey",summary:"再発行（古いキーは即時無効）",admin:true,ok:data(ref("ApiKeyWithSecret"))});
 op("delete","/api/v1/keys/{id}",{id:"revokeApiKey",summary:"無効化",admin:true,ok:data(ref("ApiKey"))});
 op("get","/api/v1/webhooks",{id:"listWebhooks",summary:"Webhook の一覧",admin:true,ok:data(arr(ref("Webhook")))});
@@ -108,7 +108,7 @@ const spec = {openapi:"3.1.0",
     parameters:[{name:"X-Signature",in:"header",required:true,schema:{type:"string"}}],requestBody:body(eventSchema),responses:{200:{description:"受け取った"}}}}},
   components:{
     securitySchemes:{
-      bearerAuth:{type:"http",scheme:"bearer",description:"APIキー（rsk_…）。将来の OAuth 2.0 でも同じヘッダーとスコープ（documents:read / documents:write）を使う"},
+      bearerAuth:{type:"http",scheme:"bearer",description:"APIキー（rsk_…）。スコープ：documents:read（参照）／documents:draft（AI下書きの作成・編集・削除。領収書、入金済み・領収書のある案件への請求書の追加、失注した見積の変換・改訂、入金・失注などの記録がある下書きの変更は 403）／documents:write（入金・失注の記録を含むすべて）。将来の OAuth 2.0 でも同じスコープを使う"},
       apiKeyAuth:{type:"apiKey",in:"header",name:"X-API-Key"},
       adminToken:{type:"http",scheme:"bearer",description:"キーと Webhook の管理用（ADMIN_TOKEN）"}},
     schemas:{

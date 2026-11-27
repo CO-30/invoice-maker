@@ -80,6 +80,38 @@ function apiList_(a){
   const offset = Number(a.offset) || 0, limit = Number(a.limit) || 30;
   return {total:list.length, documents:list.slice(offset, offset + limit)};
 }
+// 「下書きまで」のキー用の制限。入金の状態を変える操作と、本人が記録を付けた下書きの変更を止める
+function apiDraftGuard_(op, a){
+  const deny = m => aiFail_(m + "。このキーは下書きの範囲だけです。アプリで本人が操作してください", "forbidden_for_scope");
+  if(op === "status") deny("入金・失注は記録できません");
+  const receipt = "領収書は扱えません（下書きでも元の請求書が入金済みになるため）";
+  if(op === "create"){ if(a.type === "receipt") deny(receipt); return; }
+  const docs = aiDocs_(), d = aiFind_(docs, {id:a.id});
+  if(d.type === "receipt") deny(receipt);
+  if(op === "convert" && (a.to === "receipt" || (!a.to && d.type === "invoice"))) deny(receipt);
+  if(op === "convert" || op === "revise"){
+    // 新しい版は同じ案件番号を引き継ぐ。旧版や取込書類も含めて、案件全体の記録を調べる
+    const same = x => x.id === d.id || (!!d.base && x.base === d.base) || x.fromId === d.id;
+    const group = docs.filter(same);
+    const makesInvoice = op === "convert" ? d.type === "estimate" : d.type === "invoice";
+    if(makesInvoice && group.some(x => x.type === "invoice" && (x.paid || docs.some(r => r.type === "receipt" && (linked(x, r) || linked(r, x))))))
+      deny("入金済みの請求書がある案件には、請求書の版を追加できません");
+    if(makesInvoice && group.some(x => x.type === "receipt")) deny("領収書がある案件には、請求書の版を追加できません");
+    if(d.type === "estimate" && group.some(x => x.type === "estimate" && x.lost)) deny("失注にした見積は、変換・改訂できません");
+  }
+  if((op === "update" || op === "delete") && d.aiDraft && (d.paid || d.lost || d.pdfUrl)) deny("入金・失注の記録やPDFがある下書きは変えられません");
+}
+// 「下書きまで」のキーの要求は draft_ で始まる op で届く（この制限を知らない古いGASでは失敗する）
+function apiGuarded_(op, fn){ return a => { apiDraftGuard_(op, a); return fn(a); }; }
+const API_TOOL_OPS = {create_document:"create", update_draft:"update", convert_document:"convert", revise_document:"revise", set_status:"status"};
+function apiCall_(a, draftOnly){
+  const name = String(a.name || ""), args = a.arguments || {};
+  if(draftOnly && Object.prototype.hasOwnProperty.call(API_TOOL_OPS, name)){
+    try{ apiDraftGuard_(API_TOOL_OPS[name], args); }
+    catch(err){ if(err instanceof AiError) return {content:[{type:"text", text:err.message}], isError:true}; throw err; }
+  }
+  return aiCallTool_(name, args);
+}
 function apiDelete_(a){
   const r = apiById_(a.id), d = r.d;
   if(!d.aiDraft) aiFail_("削除できるのはAI下書きだけです。本人が作った（または確認・保存した）書類はアプリで本人が削除してください", "not_editable");
@@ -116,5 +148,7 @@ const API_OPS = {
   issuer: () => aiIssuer_().data,
   snapshot: () => ({documents:aiAllDocs_().map(d => ({id:d.id, type:d.type || "", no:d.no || "", updatedAt:Number(d.updatedAt) || 0, deleted:!!d.deleted}))}),
   tools: () => ({tools:AI_TOOLS, instructions:AI_INSTRUCTIONS, version:AI_VERSION}),
-  call: a => aiCallTool_(String(a.name || ""), a.arguments || {})
+  call: a => apiCall_(a, false),
+  draft_call: a => apiCall_(a, true)
 };
+["create","update","convert","revise","delete"].forEach(op => API_OPS["draft_" + op] = apiGuarded_(op, API_OPS[op]));

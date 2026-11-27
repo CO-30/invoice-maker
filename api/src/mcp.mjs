@@ -13,10 +13,12 @@ export async function mcpMessage(m, { gas, principal, meta, onWrite }) {
   if (!isPlainObject(m) || m.jsonrpc !== "2.0" || typeof m.method !== "string") return err(id, -32600, "Invalid Request");
   if (m.id === undefined) return null; // 通知
   const p = isPlainObject(m.params) ? m.params : {};
-  const canWrite = principal.scopes.includes("documents:write");
+  const canWrite = principal.scopes.includes("documents:write"), canDraft = principal.scopes.includes("documents:draft");
+  const prefix = canWrite ? "" : "draft_"; // 制限付きは別の op 名
+  const allowed = t => t.annotations?.readOnlyHint === true || (t.name === "set_status" ? canWrite : canDraft);
   const tools = async () => {
     const info = await meta();
-    return { info, list: [...info.tools, DELETE_TOOL].filter(t => canWrite || t.annotations?.readOnlyHint === true) };
+    return { info, list: [...info.tools, DELETE_TOOL].filter(allowed) };
   };
   let writing = false;
   try {
@@ -36,10 +38,10 @@ export async function mcpMessage(m, { gas, principal, meta, onWrite }) {
         const writes = list.find(t => t.name === p.name).annotations?.readOnlyHint !== true;
         writing = writes;
         if (p.name === "delete_draft") {
-          const r = await gas("delete", { id: args.id });
+          const r = await gas(prefix + "delete", { id: args.id });
           const data = { id: r.id, deleted: true, updated_at: new Date(r.updatedAt).toISOString() };
           result = { content: [{ type: "text", text: JSON.stringify(data) }], structuredContent: data };
-        } else result = await gas("call", { name: p.name, arguments: args });
+        } else result = await gas((writes ? prefix : "") + "call", { name: p.name, arguments: args });
         if (writes && !result.isError) onWrite();
       }
     } else return err(id, -32601, "Method not found: " + m.method.slice(0, 60));

@@ -8,19 +8,19 @@ import { mcpMessage } from "./mcp.mjs";
 
 export const API_VERSION = "1.16.0";
 const MAX_BODY = 100_000;
-const R = "documents:read", W = "documents:write";
+const R = "documents:read", D = "documents:draft", W = "documents:write";
 
 // auth：null=不要、"admin"=管理トークン、それ以外=必要なスコープ
 export const ROUTES = [
   ["GET", "/api/v1/health", null, "health"],
   ["GET", "/api/v1/me", R, "me"],
   ["GET", "/api/v1/documents", R, "list"],
-  ["POST", "/api/v1/documents", W, "create"],
+  ["POST", "/api/v1/documents", D, "create"],
   ["GET", "/api/v1/documents/{id}", R, "get"],
-  ["PATCH", "/api/v1/documents/{id}", W, "update"],
-  ["DELETE", "/api/v1/documents/{id}", W, "delete"],
-  ["POST", "/api/v1/documents/{id}/convert", W, "convert"],
-  ["POST", "/api/v1/documents/{id}/revise", W, "revise"],
+  ["PATCH", "/api/v1/documents/{id}", D, "update"],
+  ["DELETE", "/api/v1/documents/{id}", D, "delete"],
+  ["POST", "/api/v1/documents/{id}/convert", D, "convert"],
+  ["POST", "/api/v1/documents/{id}/revise", D, "revise"],
   ["POST", "/api/v1/documents/{id}/status", W, "status"],
   ["GET", "/api/v1/documents/{id}/message", R, "message"],
   ["GET", "/api/v1/reports/sales", R, "report"],
@@ -97,12 +97,12 @@ const HANDLERS = {
     return { data: r.documents.map(toDoc), pagination: { limit: a.limit, offset: a.offset, total: r.total } };
   },
   get: async c => doc(await c.gas("get", { id: c.id })),
-  create: async c => [201, doc(await c.gas("create", toArgs("create", objectBody(c.text))))],
-  update: async c => doc(await c.gas("update", { ...toArgs("update", objectBody(c.text)), id: c.id })),
-  convert: async c => [201, doc(await c.gas("convert", { ...toArgs("convert", objectBody(c.text)), id: c.id }))],
-  revise: async c => [201, doc(await c.gas("revise", { ...toArgs("revise", objectBody(c.text)), id: c.id }))],
+  create: async c => [201, doc(await c.gas(c.prefix + "create", { ...toArgs("create", objectBody(c.text)) }))],
+  update: async c => doc(await c.gas(c.prefix + "update", { ...toArgs("update", objectBody(c.text)), id: c.id })),
+  convert: async c => [201, doc(await c.gas(c.prefix + "convert", { ...toArgs("convert", objectBody(c.text)), id: c.id }))],
+  revise: async c => [201, doc(await c.gas(c.prefix + "revise", { ...toArgs("revise", objectBody(c.text)), id: c.id }))],
   status: async c => doc(await c.gas("status", { ...toArgs("status", objectBody(c.text)), id: c.id })),
-  delete: async c => { const r = await c.gas("delete", { id: c.id }); return { data: { id: r.id, deleted: true, updated_at: iso(r.updatedAt) } }; },
+  delete: async c => { const r = await c.gas(c.prefix + "delete", { id: c.id }); return { data: { id: r.id, deleted: true, updated_at: iso(r.updatedAt) } }; },
   message: async c => {
     const q = c.url.searchParams;
     return { data: await c.gas("message", { id: c.id, channel: q.get("channel") || "line", reminder: q.get("reminder") === "true" }) };
@@ -119,7 +119,7 @@ const HANDLERS = {
   keyCreate: async c => {
     const b = objectBody(c.text), name = typeof b.name === "string" ? b.name.trim() : "";
     if (!name || name.length > 60) throw new ApiError(422, "validation_error", "name は1〜60文字です");
-    if (!Object.hasOwn(SCOPES, b.scope)) throw new ApiError(422, "validation_error", "scope は read か write です");
+    if (!Object.hasOwn(SCOPES, b.scope)) throw new ApiError(422, "validation_error", "scope は read・draft・write のどれかです");
     const k = await c.store.createKey(name, b.scope);
     if (k.error) throw new ApiError(409, "limit_reached", "有効なキーが上限（20）です。使っていないキーを無効化してください");
     return [201, { data: k }];
@@ -145,7 +145,7 @@ const HANDLERS = {
 // Idempotency-Key：同じキーの再送には前の応答を返す
 async function withIdempotency(req, ctx, run) {
   const key = req.headers.get("Idempotency-Key");
-  if (key === null) return run();
+  if (key === null) return run(); // 呼び出し側で必須を確認済み
   if (!/^[\x21-\x7e]{1,200}$/.test(key)) throw new ApiError(422, "validation_error", "Idempotency-Key は1〜200文字の半角英数記号です");
   const k = ctx.principal.id + ":" + key;
   const fp = await sha256(req.method + " " + ctx.url.pathname + "\n" + ctx.text);
@@ -232,15 +232,17 @@ export async function handle(req, deps) {
     }
     const principal = await authenticate(req, route, base);
     extra = await limit(store, "key:" + principal.id, perMin);
-    if (route.auth !== "admin" && !principal.scopes.includes(route.auth)) throw new ApiError(403, "insufficient_scope", "このキーは読み取り専用です（" + route.auth + " が必要）");
+    if (route.auth !== "admin" && !principal.scopes.includes(route.auth)) throw new ApiError(403, "insufficient_scope", "このキーの権限ではできません（" + route.auth + " が必要）");
 
     const text = ["POST", "PATCH"].includes(req.method) ? await readBody(req) : "";
-    const ctx = { ...base, id, principal, text };
+    // 入金の記録まで許さないキーは、GAS 側の制限付きの op（draft_…）を使う
+    const ctx = { ...base, id, principal, text, prefix: principal.scopes.includes(W) ? "" : "draft_" };
     const run = async () => {
       const r = await HANDLERS[route.name](ctx);
       return Array.isArray(r) ? json(r[0], r[1]) : json(200, r);
     };
-    const isDocWrite = route.auth === W;
+    const isDocWrite = route.auth === D || route.auth === W;
+    if (isDocWrite && !req.headers.has("Idempotency-Key")) throw new ApiError(400, "idempotency_key_required", "書き込みには Idempotency-Key ヘッダーが必要です（依頼ごとに新しい値、再送は同じ値）");
     const res = isDocWrite ? await withIdempotency(req, ctx, run) : await run();
     if (isDocWrite && res.ok && !res.headers.has("Idempotency-Replayed")) waitUntil(sync());
     return finish(res);

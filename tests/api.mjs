@@ -20,7 +20,7 @@ await test("health は認証不要、me は認証が必要", async()=>{
   const h = await t.req("GET","/api/v1/health"); eq(h.status,200); eq(h.body.data.status,"ok");
   const n = await t.req("GET","/api/v1/me"); eq(n.status,401); eq(n.body.error.code,"unauthorized");
   ok(n.headers.get("WWW-Authenticate"));
-  const m = await t.req("GET","/api/v1/me",{key:t.rw}); eq(m.body.data.scopes,["documents:read","documents:write"]);
+  const m = await t.req("GET","/api/v1/me",{key:t.rw}); eq(m.body.data.scopes,["documents:read","documents:draft","documents:write"]);
   const x = await t.req("GET","/api/v1/me",{headers:{"X-API-Key":t.ro}}); eq(x.body.data.scopes,["documents:read"]);
   eq(t.gasCalls.length,0);
 });
@@ -199,6 +199,65 @@ await test("監査対応：MCPの結果不明は再実行を止める・控え�
   const r = await t.req("POST","/mcp",{key:t.rw, body:{jsonrpc:"2.0",id:2,method:"tools/call",params:{name:"create_document",arguments:{type:"estimate",client:"a",items:[{desc:"x",price:1}]}}}});
   ok(r.body.result.content[0].text.includes("やり直さないで"), r.body.result.content[0].text); ok(real);
   await t.store.idemBegin("p","f"); t.clock.t += 4*60e3; eq((await t.store.idemBegin("p","f")).state,"unknown");
+});
+
+await test("下書き権限：/me の scopes、下書きの作成・編集・削除は可、入金・失注は不可", async()=>{
+  const t = await setup(); const k = (await t.issue("draft")).key;
+  eq((await t.req("GET","/api/v1/me",{key:k})).body.data.scopes,["documents:read","documents:draft"]);
+  const c = await t.req("POST","/api/v1/documents",{key:k, body:NEW}); eq(c.status,201); const id = c.body.data.id;
+  eq((await t.req("PATCH",`/api/v1/documents/${id}`,{key:k, body:{subject:"z"}})).status,200);
+  for(const body of [{lost:true},{paid:true}]){ const r = await t.req("POST",`/api/v1/documents/${id}/status`,{key:k, body}); eq(r.status,403); eq(r.body.error.code,"insufficient_scope"); }
+  eq((await t.req("GET",`/api/v1/documents/${id}`,{key:k})).body.data.status,"open");
+  eq((await t.req("DELETE",`/api/v1/documents/${id}`,{key:k})).status,200);
+  own(t); eq((await t.req("PATCH","/api/v1/documents/own1",{key:k, body:{subject:"x"}})).status,409);
+  eq((await t.req("DELETE","/api/v1/documents/own1",{key:k})).status,409);
+});
+await test("下書き権限：入金状態を変える操作（領収書・入金済み請求書の改訂）と記録のある下書きは不可", async()=>{
+  const t = await setup(); const k = (await t.issue("draft")).key; own(t);
+  const no = async (m,path,body) => { const r = await t.req(m,path,{key:k, body}); eq([r.status,r.body.error?.code],[403,"forbidden_for_scope"],m+" "+path+" "+JSON.stringify(body)); };
+  await no("POST","/api/v1/documents",{...NEW, type:"receipt"});
+  await no("POST","/api/v1/documents/own1/convert",{});
+  await no("POST","/api/v1/documents/own1/convert",{to:"receipt"});
+  eq((await t.req("GET","/api/v1/documents/own1",{key:k})).body.data.status !== "paid", true);
+  const rc = await mk(t,{type:"receipt"});
+  await no("PATCH",`/api/v1/documents/${rc.id}`,{subject:"x"}); await no("DELETE",`/api/v1/documents/${rc.id}`); await no("POST",`/api/v1/documents/${rc.id}/revise`,{});
+  own(t,{id:"own2", base:"2611-060", no:"I2611-060", paid:true});
+  await no("POST","/api/v1/documents/own2/revise",{});
+  const d = await mk(t); await t.req("POST",`/api/v1/documents/${d.id}/status`,{key:t.rw, body:{lost:true}});
+  await no("PATCH",`/api/v1/documents/${d.id}`,{subject:"x"});
+  const e = await mk(t); eq((await t.req("POST",`/api/v1/documents/${e.id}/convert`,{key:k, body:{}})).status,201);
+});
+await test("下書き権限のMCP：set_status は使えず、領収書も作れない", async()=>{
+  const t = await setup(); const k = (await t.issue("draft")).key;
+  const rpc = (method, params) => t.req("POST","/mcp",{key:k, body:{jsonrpc:"2.0", id:1, method, params}});
+  const names = (await rpc("tools/list")).body.result.tools.map(x=>x.name); ok(names.includes("create_document") && names.includes("delete_draft") && !names.includes("set_status"));
+  eq((await rpc("tools/call",{name:"set_status", arguments:{id:"x", paid:true}})).body.result.isError,true);
+  const r = await rpc("tools/call",{name:"create_document", arguments:{type:"receipt", client:"a", items:[{desc:"x",price:1}]}}); eq(r.body.result.isError,true);
+  ok(!(await rpc("tools/call",{name:"create_document", arguments:{type:"estimate", client:"a", items:[{desc:"x",price:1}]}})).body.result.isError);
+});
+await test("書類の書き込み（REST）は Idempotency-Key 必須", async()=>{
+  const t = await setup();
+  const r = await t.req("POST","/api/v1/documents",{key:t.rw, body:NEW, noIdem:true}); eq([r.status,r.body.error.code],[400,"idempotency_key_required"]);
+  eq((await t.req("GET","/api/v1/documents",{key:t.rw})).body.pagination.total,0);
+});
+
+await test("監査対応(下書き権限)：入金済みの案件に請求書の版を足せない・失注を覆せない・type の細工・旧GASでは失敗", async()=>{
+  const t = await setup(); const k = (await t.issue("draft")).key;
+  const no = async (id,op) => { const r = await t.req("POST",`/api/v1/documents/${id}/${op}`,{key:k, body:{}}); eq([r.status,r.body.error?.code],[403,"forbidden_for_scope"],id+" "+op); };
+  own(t,{id:"e1", type:"estimate", base:"2611-070", no:"Q2611-070"});
+  own(t,{id:"i1", base:"2611-070", no:"I2611-070", paid:true});
+  await no("e1","convert");                                   // 入金済みの請求書がある見積を再変換
+  own(t,{id:"a1", base:"2611-071", no:"I2611-071"}); own(t,{id:"a2", base:"2611-071", no:"I2611-071-2", rev:2, paid:true});
+  await no("a1","revise"); await no("a2","revise");           // 版違いが入金済み
+  own(t,{id:"imp_1", type:"estimate", base:"2611-070", no:"X1"}); await no("imp_1","convert"); // 取込書類も引き継ぐ番号で調べる
+  own(t,{id:"l1", type:"estimate", base:"2611-072", no:"Q2611-072", lost:true});
+  await no("l1","convert"); await no("l1","revise");
+  const bad = {...NEW, type:["receipt"]};
+  ok((await t.req("POST","/api/v1/documents",{key:k, body:bad})).status >= 400);
+  ok((await t.req("POST","/api/v1/documents",{key:t.rw, body:bad})).status === 422);
+  const m = await t.req("POST","/mcp",{key:k, body:{jsonrpc:"2.0",id:1,method:"tools/call",params:{name:"create_document",arguments:{type:["receipt"],client:"a",items:[{desc:"x",price:1}]}}}}); eq(m.body.result.isError,true);
+  t.gasCalls.length = 0; await t.req("POST","/api/v1/documents",{key:k, body:NEW});
+  eq(t.gasCalls[0].body.op,"draft_create", "制限付きは別の op 名（古いGASは知らないので失敗する）");
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

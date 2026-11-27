@@ -315,7 +315,7 @@
       "post": {
         "operationId": "createDocument",
         "summary": "書類を作る（AI下書き）",
-        "description": "必要なスコープ：documents:write",
+        "description": "必要なスコープ：documents:draft",
         "security": [
           {
             "bearerAuth": []
@@ -324,17 +324,17 @@
             "apiKeyAuth": []
           }
         ],
-        "x-required-scope": "documents:write",
+        "x-required-scope": "documents:draft",
         "parameters": [
           {
             "name": "Idempotency-Key",
             "in": "header",
-            "required": false,
+            "required": true,
             "schema": {
               "type": "string",
               "maxLength": 200
             },
-            "description": "任意（推奨）。24時間、同じキー・同じ内容の再送には前の応答を返す"
+            "description": "必須。依頼ごとに新しい値。24時間、同じキー・同じ内容の再送には前の応答を返す"
           }
         ],
         "requestBody": {
@@ -477,7 +477,7 @@
       "patch": {
         "operationId": "updateDocument",
         "summary": "AI下書きを直す（本人の書類は 409）",
-        "description": "必要なスコープ：documents:write",
+        "description": "必要なスコープ：documents:draft",
         "security": [
           {
             "bearerAuth": []
@@ -486,17 +486,17 @@
             "apiKeyAuth": []
           }
         ],
-        "x-required-scope": "documents:write",
+        "x-required-scope": "documents:draft",
         "parameters": [
           {
             "name": "Idempotency-Key",
             "in": "header",
-            "required": false,
+            "required": true,
             "schema": {
               "type": "string",
               "maxLength": 200
             },
-            "description": "任意（推奨）。24時間、同じキー・同じ内容の再送には前の応答を返す"
+            "description": "必須。依頼ごとに新しい値。24時間、同じキー・同じ内容の再送には前の応答を返す"
           }
         ],
         "requestBody": {
@@ -569,7 +569,7 @@
       "delete": {
         "operationId": "deleteDocument",
         "summary": "AI下書きを削除（本人の書類・入金や失注の記録・PDFがある下書きは 409）",
-        "description": "必要なスコープ：documents:write",
+        "description": "必要なスコープ：documents:draft",
         "security": [
           {
             "bearerAuth": []
@@ -578,17 +578,17 @@
             "apiKeyAuth": []
           }
         ],
-        "x-required-scope": "documents:write",
+        "x-required-scope": "documents:draft",
         "parameters": [
           {
             "name": "Idempotency-Key",
             "in": "header",
-            "required": false,
+            "required": true,
             "schema": {
               "type": "string",
               "maxLength": 200
             },
-            "description": "任意（推奨）。24時間、同じキー・同じ内容の再送には前の応答を返す"
+            "description": "必須。依頼ごとに新しい値。24時間、同じキー・同じ内容の再送には前の応答を返す"
           }
         ],
         "responses": {
@@ -672,7 +672,7 @@
       "post": {
         "operationId": "convertDocument",
         "summary": "見積→請求・領収、請求→領収（本文は {} でも可）",
-        "description": "必要なスコープ：documents:write",
+        "description": "必要なスコープ：documents:draft",
         "security": [
           {
             "bearerAuth": []
@@ -681,17 +681,17 @@
             "apiKeyAuth": []
           }
         ],
-        "x-required-scope": "documents:write",
+        "x-required-scope": "documents:draft",
         "parameters": [
           {
             "name": "Idempotency-Key",
             "in": "header",
-            "required": false,
+            "required": true,
             "schema": {
               "type": "string",
               "maxLength": 200
             },
-            "description": "任意（推奨）。24時間、同じキー・同じ内容の再送には前の応答を返す"
+            "description": "必須。依頼ごとに新しい値。24時間、同じキー・同じ内容の再送には前の応答を返す"
           }
         ],
         "requestBody": {
@@ -790,7 +790,7 @@
       "post": {
         "operationId": "reviseDocument",
         "summary": "改訂版を作る（渡した項目だけ変える）",
-        "description": "必要なスコープ：documents:write",
+        "description": "必要なスコープ：documents:draft",
         "security": [
           {
             "bearerAuth": []
@@ -799,17 +799,17 @@
             "apiKeyAuth": []
           }
         ],
-        "x-required-scope": "documents:write",
+        "x-required-scope": "documents:draft",
         "parameters": [
           {
             "name": "Idempotency-Key",
             "in": "header",
-            "required": false,
+            "required": true,
             "schema": {
               "type": "string",
               "maxLength": 200
             },
-            "description": "任意（推奨）。24時間、同じキー・同じ内容の再送には前の応答を返す"
+            "description": "必須。依頼ごとに新しい値。24時間、同じキー・同じ内容の再送には前の応答を返す"
           }
         ],
         "requestBody": {
@@ -908,12 +908,12 @@
           {
             "name": "Idempotency-Key",
             "in": "header",
-            "required": false,
+            "required": true,
             "schema": {
               "type": "string",
               "maxLength": 200
             },
-            "description": "任意（推奨）。24時間、同じキー・同じ内容の再送には前の応答を返す"
+            "description": "必須。依頼ごとに新しい値。24時間、同じキー・同じ内容の再送には前の応答を返す"
           }
         ],
         "requestBody": {
@@ -1337,6 +1337,7 @@
                     "type": "string",
                     "enum": [
                       "read",
+                      "draft",
                       "write"
                     ]
                   }
@@ -1942,7 +1943,7 @@
       "bearerAuth": {
         "type": "http",
         "scheme": "bearer",
-        "description": "APIキー（rsk_…）。将来の OAuth 2.0 でも同じヘッダーとスコープ（documents:read / documents:write）を使う"
+        "description": "APIキー（rsk_…）。スコープ：documents:read（参照）／documents:draft（AI下書きの作成・編集・削除。領収書、入金済み・領収書のある案件への請求書の追加、失注した見積の変換・改訂、入金・失注などの記録がある下書きの変更は 403）／documents:write（入金・失注の記録を含むすべて）。将来の OAuth 2.0 でも同じスコープを使う"
       },
       "apiKeyAuth": {
         "type": "apiKey",
@@ -2408,6 +2409,7 @@
             "type": "string",
             "enum": [
               "read",
+              "draft",
               "write"
             ]
           },
