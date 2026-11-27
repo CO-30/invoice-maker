@@ -196,6 +196,13 @@ test("入金済みを外すと入金日も消える形で保存できる", ()=>{
 
 // 同期の合わせ方（v1.15.1）
 const {mergePulled} = extractFns(["mergePulled"]);
+const {keepOnDelete} = extractFns(["keepOnDelete"]);
+test("同期：削除が来ても、本人が保存した未送信の版は残して送り直す", ()=>{
+  const r=keepOnDelete({id:"a",subject:"本人",updatedAt:3},{id:"a",deleted:true,updatedAt:5},true); eq([r.subject,r.updatedAt],["本人",6]);
+  eq(keepOnDelete({id:"a",updatedAt:9},{id:"a",deleted:true,updatedAt:5},true).updatedAt,9);
+  eq(keepOnDelete({id:"a",aiDraft:true,updatedAt:3},{id:"a",deleted:true,updatedAt:5},true),null);
+  eq(keepOnDelete({id:"a",updatedAt:3},{id:"a",deleted:true,updatedAt:5},false),null);
+});
 test("同期：サーバーが新しく未送信なしならサーバー側", ()=>{ const L={id:"a",subject:"端末",updatedAt:1}, S={id:"a",subject:"AI",updatedAt:5}; const r=mergePulled(L,S,false); eq([r.doc.subject,r.kept],["AI",false]); });
 test("同期：端末が新しければ端末のまま", ()=>{ const L={id:"a",subject:"端末",updatedAt:9}, S={id:"a",subject:"AI",updatedAt:5}; const r=mergePulled(L,S,true); eq(r.doc===L,true); });
 test("同期：端末で未送信の入金の記録は、サーバーが未入金でも消さない", ()=>{

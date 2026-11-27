@@ -20,7 +20,7 @@ const parts = FNS.map(name => {
 });
 const shared = "/**\n * REDSEAL AI連携の共通計算（自動生成：node tools/build-gas.mjs）\n * index.html の同名関数のコピーです。ここは直接直さず、index.html を直してから作り直してください。\n */\n" + parts.join("\n") + "\n";
 
-const gasSrc = [fs.readFileSync(path.join(root, "gas", "Code.generic.gs"), "utf8"), shared, fs.readFileSync(path.join(root, "gas", "Ai.gs"), "utf8")].join("\n");
+const gasSrc = [fs.readFileSync(path.join(root, "gas", "Code.generic.gs"), "utf8"), shared, fs.readFileSync(path.join(root, "gas", "Ai.gs"), "utf8"), fs.readFileSync(path.join(root, "gas", "Api.gs"), "utf8")].join("\n");
 if(/<\/script/i.test(gasSrc)) throw new Error("GASのコードに </script が含まれています");
 const re = /(<script type="text\/plain" id="gasSrc">)([\s\S]*?)(<\/script>)/;
 if(!re.test(html)) throw new Error("index.html に gasSrc がありません");

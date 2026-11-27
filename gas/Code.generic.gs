@@ -39,6 +39,8 @@ function handle_(e){
     if(e.postData && e.postData.contents) req = JSON.parse(e.postData.contents);
     else req = e.parameter || {};
   }catch(err){ return (e.parameter && e.parameter.ai !== undefined) ? out_({jsonrpc:"2.0",id:null,error:{code:-32700,message:"Parse error"}}) : out_({ok:false,error:"bad json"}); }
+  // 外部連携API（api/ の Worker 用）：Api.gs があるときだけ。POST の本文だけを受け付ける
+  if(req.action === "api" && e.postData && typeof apiHandle_ === "function") return apiHandle_(req);
   // AI連携（MCP）：Ai.gs があるときだけ。URL に ?ai=キー を付けて呼ぶ
   if(typeof isMcp_ === "function"){
     if(isMcp_(req)) return mcpHandle_(req, e);

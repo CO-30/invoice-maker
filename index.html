@@ -572,6 +572,25 @@ details.help summary{font-size:13px;color:var(--accent);font-weight:700;cursor:p
     <p class="hint">Code.gs の IMPORT_FOLDER_IDS に入っているフォルダ内の .xlsx を、シート1枚＝1書類として取り込みます。取り込み済みのものは二重登録されません。</p>
     <p class="hint" id="syncInfo"></p>
   </div>
+  <div class="card" id="extApiCard">
+    <h2>外部連携（APIキー）</h2>
+    <p class="hint">Muse などの外部AIがつなぐためのキーを発行します。先に API（Cloudflare Workers）の設置が必要です（README の「外部連携」）。下の「管理トークン」は端末に保存しません。</p>
+    <label class="f">APIのベースURL</label><input type="url" id="x_base" placeholder="https://redseal-api.〇〇.workers.dev" autocapitalize="off" autocorrect="off">
+    <label class="f">管理トークン（ADMIN_TOKEN）</label><input type="password" id="x_admin" autocomplete="off">
+    <label class="f">新しいキーの名前</label><input type="text" id="x_name" placeholder="Muse">
+    <label class="f">権限</label><select id="x_scope"><option value="read">読み取り専用</option><option value="write">読み書き</option></select>
+    <div class="btnrow"><button class="btn" id="x_issue">キーを発行</button><button class="btn secondary" id="x_reload">一覧を表示</button></div>
+    <div id="x_secret" style="display:none;border:2px dashed currentColor;border-radius:8px;padding:10px;margin-top:10px">
+      <b id="x_secretTitle"></b><p class="hint">この画面を閉じると二度と表示できません。</p>
+      <input type="text" id="x_secretVal" readonly><div class="btnrow"><button class="btn sm" id="x_copy">コピー</button><button class="btn sm ghost" id="x_hide">閉じる</button></div>
+    </div>
+    <div id="x_keys"></div>
+    <details class="help"><summary>Webhook（変更の通知先）</summary>
+      <label class="f">通知先URL（https）</label><input type="url" id="x_hookUrl" placeholder="https://..." autocapitalize="off" autocorrect="off">
+      <div class="btnrow"><button class="btn sm" id="x_hookAdd">登録</button><button class="btn sm secondary" id="x_hookReload">一覧を表示</button></div>
+      <div id="x_hooks"></div>
+    </details>
+  </div>
   <div class="card">
     <h2>データのバックアップ</h2>
     <p class="hint">データはこの端末（ブラウザ）内に保存されます。機種変更や万一に備えて、ときどき書き出してください。</p>
@@ -625,6 +644,8 @@ function handle_(e){
     if(e.postData && e.postData.contents) req = JSON.parse(e.postData.contents);
     else req = e.parameter || {};
   }catch(err){ return (e.parameter && e.parameter.ai !== undefined) ? out_({jsonrpc:"2.0",id:null,error:{code:-32700,message:"Parse error"}}) : out_({ok:false,error:"bad json"}); }
+  // 外部連携API（api/ の Worker 用）：Api.gs があるときだけ。POST の本文だけを受け付ける
+  if(req.action === "api" && e.postData && typeof apiHandle_ === "function") return apiHandle_(req);
   // AI連携（MCP）：Ai.gs があるときだけ。URL に ?ai=キー を付けて呼ぶ
   if(typeof isMcp_ === "function"){
     if(isMcp_(req)) return mcpHandle_(req, e);
@@ -1083,8 +1104,8 @@ const AI_TOOLS = [
 ];
 
 /* ===================== ツール本体 ===================== */
-function AiError(msg){ this.message = msg; }
-function aiFail_(msg){ throw new AiError(msg); }
+function AiError(msg, code){ this.message = msg; this.code = code || "validation_error"; }
+function aiFail_(msg, code){ throw new AiError(msg, code); }
 function aiCallTool_(name, args){
   const fn = AI_TOOL_FNS[name];
   if(!fn) return {content:[{type:"text", text:"そのツールはありません: " + name}], isError:true};
@@ -1126,7 +1147,7 @@ function aiFind_(docs, args){
   if(args.id) d = docs.find(x => x.id === String(args.id));
   else if(args.no){ const n = String(args.no).trim().toLowerCase(); d = docs.find(x => String(x.no || "").toLowerCase() === n); }
   else aiFail_("id か no を指定してください");
-  if(!d) aiFail_("書類が見つかりません: " + (args.id || args.no));
+  if(!d) aiFail_("書類が見つかりません: " + (args.id || args.no), "not_found");
   return d;
 }
 function aiSummary_(d, docs, today){
@@ -1139,7 +1160,7 @@ function aiSummary_(d, docs, today){
   if(d.pdfUrl) o.pdfUrl = d.pdfUrl;
   return o;
 }
-function aiSave_(d){ d.updatedAt = Date.now(); const r = upsertDoc_(d); if(!r || r.skipped) aiFail_("保存できませんでした（ほかの端末で同時に更新された可能性があります。もう一度試してください）"); return d; }
+function aiSave_(d){ d.updatedAt = Date.now(); const r = upsertDoc_(d); if(!r || r.skipped) aiFail_("保存できませんでした（ほかの端末で同時に更新された可能性があります。もう一度試してください）", "conflict"); return d; }
 
 // 項目の確認と反映（create／update／revise 共通）。partial=true なら渡した項目だけ
 function aiApply_(d, a, partial){
@@ -1227,7 +1248,7 @@ function aiCreate_(a){
 }
 function aiUpdateDraft_(a){
   const docs = aiDocs_(), d = aiFind_(docs, {id:a.id});
-  if(!d.aiDraft) aiFail_("本人が作った（または確認・保存した）書類は変更できません。作り直す場合は revise_document で改訂版を作ってください");
+  if(!d.aiDraft) aiFail_("本人が作った（または確認・保存した）書類は変更できません。作り直す場合は revise_document で改訂版を作ってください", "not_editable");
   const x = JSON.parse(JSON.stringify(d)); const b = {}; Object.keys(a).forEach(k => { if(k !== "id") b[k] = a[k]; });
   aiApply_(x, b, true);
   if(b.date !== undefined && b.due === undefined && x.type !== "receipt"){ const S = aiSettings_(); x.due = aiAddDays_(x.date, x.type === "invoice" ? S.invDays : S.estDays); }
@@ -1313,6 +1334,127 @@ function aiIssuer_(){
   o.taxIn = String(S.taxIn) === "1"; o.presets = presets; o.settingsSynced = !!getSettings_();
   return {data:o};
 }
+
+/**
+ * REDSEAL 外部連携API の GAS 側窓口（api/ の Cloudflare Worker だけが呼びます）
+ *
+ * 呼び方：ウェブアプリのURL（…/exec）へ POST、本文 {"action":"api","aiKey":"キー","op":"…","args":{…}}
+ * キーはURLに載せず本文で送ります。AI直結用の AI_KEY とは別の API_BRIDGE_KEY です。
+ * 設置：エディタで setupApi を1回実行 → ログのキーを Worker の GAS_BRIDGE_KEY に登録
+ * 作り直し：resetApiKey／停止：disableApi
+ */
+function setupApi(){
+  const p = PropertiesService.getScriptProperties();
+  let k = p.getProperty("API_BRIDGE_KEY");
+  if(!k){ k = (Utilities.getUuid() + Utilities.getUuid()).replace(/-/g, ""); p.setProperty("API_BRIDGE_KEY", k); }
+  Logger.log("Worker の GAS_BRIDGE_KEY（人に見せないでください）: " + k);
+  return k;
+}
+function resetApiKey(){ PropertiesService.getScriptProperties().deleteProperty("API_BRIDGE_KEY"); return setupApi(); }
+function disableApi(){ PropertiesService.getScriptProperties().deleteProperty("API_BRIDGE_KEY"); Logger.log("外部連携APIを止めました"); }
+
+function apiHandle_(req){
+  const k = PropertiesService.getScriptProperties().getProperty("API_BRIDGE_KEY");
+  if(!k || typeof req.aiKey !== "string" || req.aiKey !== k) return out_({ok:false, code:"unauthorized", message:"GASの接続キーが違うか、停止しています"});
+  const fn = Object.prototype.hasOwnProperty.call(API_OPS, req.op) ? API_OPS[req.op] : null;
+  if(!fn) return out_({ok:false, code:"validation_error", message:"unknown op"});
+  const lock = LockService.getScriptLock();
+  if(!lock.tryLock(20000)) return out_({ok:false, code:"busy", message:"ほかの処理が混み合っています。少し待ってもう一度試してください"});
+  try{
+    return out_({ok:true, result:fn(req.args || {})});
+  }catch(err){
+    if(err instanceof AiError) return out_({ok:false, code:err.code, message:err.message});
+    return out_({ok:false, code:"internal", message:String(err && err.message || err)});
+  }finally{ lock.releaseLock(); }
+}
+
+// 書類1件の外部向けの形（時刻はミリ秒。ISO 8601 への変換は Worker）
+function apiDoc_(d, docs, today){
+  const o = aiSummary_(d, docs, today);
+  o.createdAt = Number(d.createdAt) || Number(d.updatedAt) || 0;
+  o.updatedAt = Number(d.updatedAt) || 0;
+  o.deleted = !!d.deleted;
+  o.aiDraft = !!d.aiDraft;
+  return o;
+}
+function apiFull_(d, docs, today){
+  const o = apiDoc_(d, docs, today);
+  ["contact","validText","note","memo","taxRate","rounding","layout","fromId"].forEach(k => o[k] = d[k] === undefined ? "" : d[k]);
+  o.taxIn = d.taxIn === true;
+  o.rev = Number(d.rev) || 1;
+  o.items = (d.items || []).filter(x => x.desc || x.price !== "");
+  return o;
+}
+function apiById_(id){
+  const all = aiAllDocs_(), d = aiFind_(all.filter(x => !x.deleted), {id:id});
+  return {all:all, d:d};
+}
+function apiOne_(id){
+  const docs = aiDocs_(), d = aiFind_(docs, {id:id});
+  return {document:apiFull_(d, docs, aiToday_())};
+}
+function apiList_(a){
+  const all = aiAllDocs_(), docs = all.filter(d => !d.deleted), today = aiToday_();
+  const since = a.updatedSince === undefined ? null : Number(a.updatedSince);
+  const q = a.query ? String(a.query).trim().toLowerCase() : "";
+  const list = (a.includeDeleted ? all : docs).map(d => apiDoc_(d, docs, today)).filter(s => {
+    if(since !== null && !(s.updatedAt > since)) return false;
+    if(a.type && s.type !== a.type) return false;
+    if(a.from && !(s.date >= a.from)) return false;
+    if(a.to && !(s.date && s.date <= a.to)) return false;
+    if(q && [s.client, s.subject, s.no, s.base].join(" ").toLowerCase().indexOf(q) < 0) return false;
+    if(a.status){
+      if(s.deleted) return false;
+      if(a.status === "ai_draft") return s.aiDraft;
+      if(a.status === "unpaid") return s.status === "unpaid" || s.status === "overdue";
+      return s.status === a.status;
+    }
+    return true;
+  });
+  const byId = (x, y) => String(x.id).localeCompare(String(y.id));
+  if(since !== null) list.sort((x, y) => x.updatedAt - y.updatedAt || byId(x, y));
+  else list.sort((x, y) => String(y.date || "").localeCompare(String(x.date || "")) || y.updatedAt - x.updatedAt || byId(x, y));
+  const offset = Number(a.offset) || 0, limit = Number(a.limit) || 30;
+  return {total:list.length, documents:list.slice(offset, offset + limit)};
+}
+function apiDelete_(a){
+  const r = apiById_(a.id), d = r.d;
+  if(!d.aiDraft) aiFail_("削除できるのはAI下書きだけです。本人が作った（または確認・保存した）書類はアプリで本人が削除してください", "not_editable");
+  if(d.paid || d.lost || d.pdfUrl) aiFail_("入金・失注の記録やPDFがある下書きは削除できません。アプリで本人が確認してください", "not_editable");
+  const x = JSON.parse(JSON.stringify(d));
+  x.deleted = true;
+  x.updatedAt = Math.max(Date.now(), (Number(d.updatedAt) || 0) + 1);
+  const s = upsertDoc_(x);
+  if(!s || s.skipped) aiFail_("削除できませんでした（同時に更新された可能性があります）", "conflict");
+  return {id:x.id, deleted:true, updatedAt:x.updatedAt};
+}
+// ツール名で既存の処理を呼び、作成・変更した書類の全項目を返す
+function apiWrite_(fn, args){
+  const r = fn(args);
+  return apiOne_(r.data.document.id);
+}
+const API_OPS = {
+  ping: () => ({time:new Date().toISOString()}),
+  list: apiList_,
+  get: a => {
+    const docs = aiDocs_(), today = aiToday_(), d = aiFind_(docs, {id:a.id});
+    const o = apiFull_(d, docs, today);
+    o.related = docs.filter(x => linked(d, x) || linked(x, d)).map(x => apiDoc_(x, docs, today));
+    return {document:o};
+  },
+  create: a => apiWrite_(aiCreate_, a),
+  update: a => apiWrite_(aiUpdateDraft_, a),
+  convert: a => apiWrite_(aiConvert_, a),
+  revise: a => apiWrite_(aiRevise_, a),
+  status: a => apiWrite_(aiSetStatus_, a),
+  delete: apiDelete_,
+  report: a => aiReport_(a).data,
+  message: a => aiMessage_(a).data,
+  issuer: () => aiIssuer_().data,
+  snapshot: () => ({documents:aiAllDocs_().map(d => ({id:d.id, type:d.type || "", no:d.no || "", updatedAt:Number(d.updatedAt) || 0, deleted:!!d.deleted}))}),
+  tools: () => ({tools:AI_TOOLS, instructions:AI_INSTRUCTIONS, version:AI_VERSION}),
+  call: a => aiCallTool_(String(a.name || ""), a.arguments || {})
+};
 </script>
 <div class="upd" id="upd"><span>新しいバージョンがあります</span><button id="updBtn">更新する</button></div>
 <div class="modal" id="msgModal"><div class="sheet">
@@ -1335,7 +1477,7 @@ function aiIssuer_(){
 <script src="feedback/feedback-widget.js?v=1.14.0"></script>
 <script>
 /* ============ 定数・既定 ============ */
-const APP_VERSION="1.15.0";
+const APP_VERSION="1.16.0";
 // 要望の受付先（共通の要望受付GASのウェブアプリURL …/exec）。空なら送信欄は「未設定」と表示
 const FEEDBACK_URL="https://script.google.com/macros/s/AKfycbwRiAKzdRhW0SQFyNuoIlGmPQx9rGA199TT0weaKZ-v3-G4nmfdddiot9f45Rs9mSNCQQ/exec";
 const DEFAULT_STAMP = ""; // 社判は利用者が設定で登録する（見本の印は入れない）
@@ -2445,6 +2587,13 @@ function mergePulled(local,server,pending){
   m.updatedAt=(server.updatedAt||0)+1;
   return {doc:m,kept:true};
 }
+// 削除の知らせが来ても、本人が保存・入金・失注の記録をした未送信の版は消さずに送り直す
+function keepOnDelete(local,server,pending){
+  if(!pending||(local.aiDraft&&!local.paid&&!local.lost&&!local.pdfUrl)) return null;
+  const m=Object.assign({},local); delete m.deleted;
+  m.updatedAt=Math.max(local.updatedAt||0,(server.updatedAt||0)+1);
+  return m;
+}
 async function pullAll(){
   if(!syncReady()) return {n:0,kept:0}; dot("busy");
   const since=0; // 削除反映のため全件取得（件数が増えたら差分化）
@@ -2453,7 +2602,10 @@ async function pullAll(){
   const pend=new Set(queue.filter(q=>q.id).map(q=>q.id)); // まだ送っていない（この端末で変更した）書類
   for(const d of r.docs){
     const i=docs.findIndex(x=>x.id===d.id);
-    if(d.deleted){ if(i>=0){ docs.splice(i,1); n++; } continue; }
+    if(d.deleted){
+      if(i>=0){ const m=keepOnDelete(docs[i],d,pend.has(d.id)); if(m){ docs[i]=m; kept++; } else { docs.splice(i,1); n++; } }
+      continue;
+    }
     if(i<0){ docs.push(d); n++; continue; }
     const m=mergePulled(docs[i],d,pend.has(d.id));
     if(m.kept){ docs[i]=m.doc; kept++; } else if(m.doc!==docs[i]){ docs[i]=m.doc; n++; }
@@ -2492,6 +2644,63 @@ if(location.protocol!=="file:") { checkUpdate(false); document.addEventListener(
 
 applyTitle(); bindEdit();
 loadStampRatio(); migrateStamp(); updateSampleNote();
+</script>
+<script>
+/* ============ 外部連携（APIキー・Webhook の管理）。設定の同期には含めない ============ */
+(()=>{
+  const g=id=>document.getElementById(id);
+  const BASE_KEY="qim_ext_api_base";
+  try{ g("x_base").value=localStorage.getItem(BASE_KEY)||""; }catch(e){}
+  async function api(method,path,body){
+    const base=g("x_base").value.trim().replace(/\/+$/,""), token=g("x_admin").value.trim();
+    if(!/^https:\/\/[^?#]+$/.test(base)&&!/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(base)) throw new Error("ベースURLは https:// で始めてください");
+    if(!token) throw new Error("管理トークンを入れてください");
+    const r=await fetch(base+path,{method,headers:Object.assign({Authorization:"Bearer "+token},body?{"Content-Type":"application/json"}:{}),body:body?JSON.stringify(body):undefined});
+    const j=await r.json().catch(()=>null);
+    if(!r.ok||!j) throw new Error((j&&j.error&&j.error.message)||("接続できません（"+r.status+"）"));
+    try{ localStorage.setItem(BASE_KEY,base); }catch(e){}
+    return j.data;
+  }
+  const run=fn=>async()=>{ try{ await fn(); }catch(e){ alert(e.message); } };
+  const el=(tag,text,cls)=>{ const x=document.createElement(tag); if(text!=null) x.textContent=text; if(cls) x.className=cls; return x; };
+  const day=s=>s?new Date(s).toLocaleDateString("ja-JP"):"なし";
+  function showSecret(title,value){ g("x_secretTitle").textContent=title; g("x_secretVal").value=value; g("x_secret").style.display=""; }
+  function hideSecret(){ g("x_secretVal").value=""; g("x_secret").style.display="none"; }
+  function row(box,lines,buttons){
+    const d=el("div"); d.style.cssText="border-top:1px solid #999;padding:8px 0";
+    lines.forEach((t,i)=>{ const p=el(i?"div":"b",t); p.style.wordBreak="break-all"; if(i) p.className="hint"; d.appendChild(p); });
+    const br=el("div",null,"btnrow"); buttons.forEach(([label,cls,fn])=>{ const b=el("button",label,"btn sm "+cls); b.onclick=run(fn); br.appendChild(b); });
+    if(buttons.length) d.appendChild(br);
+    box.appendChild(d);
+  }
+  async function keys(){
+    const list=await api("GET","/api/v1/keys"), box=g("x_keys"); box.textContent="";
+    if(!list.length) box.appendChild(el("p","キーはまだありません","hint"));
+    list.slice().reverse().forEach(k=>row(box,
+      [(k.revoked_at?"【無効】":"【有効】")+k.name, (k.scope==="write"?"読み書き":"読み取り専用")+"／先頭 "+k.prefix+"…／最後に使った日 "+day(k.last_used_at)],
+      k.revoked_at?[]:[["再発行","secondary",async()=>{ if(!confirm("「"+k.name+"」を再発行しますか？古いキーはすぐ使えなくなります。")) return; const n=await api("POST","/api/v1/keys/"+k.id+"/rotate"); showSecret("再発行したキー："+n.name,n.key); await keys(); }],
+        ["無効化","danger",async()=>{ if(!confirm("「"+k.name+"」を無効にしますか？")) return; await api("DELETE","/api/v1/keys/"+k.id); hideSecret(); await keys(); }]]));
+  }
+  async function hooks(){
+    const list=await api("GET","/api/v1/webhooks"), box=g("x_hooks"); box.textContent="";
+    if(!list.length) box.appendChild(el("p","通知先はまだありません","hint"));
+    list.forEach(h=>row(box,[h.url,"最後の応答 "+(h.last_status===null?"まだなし":h.last_status===0?"接続失敗":h.last_status)],
+      [["削除","danger",async()=>{ if(!confirm("この通知先を削除しますか？")) return; await api("DELETE","/api/v1/webhooks/"+h.id); hideSecret(); await hooks(); }]]));
+  }
+  g("x_issue").onclick=run(async()=>{
+    const name=g("x_name").value.trim(); if(!name) throw new Error("キーの名前を入れてください");
+    g("x_issue").disabled=true;
+    try{ const k=await api("POST","/api/v1/keys",{name,scope:g("x_scope").value}); showSecret("新しいキー："+k.name,k.key); g("x_name").value=""; await keys(); }
+    finally{ g("x_issue").disabled=false; }
+  });
+  g("x_reload").onclick=run(keys);
+  g("x_hookReload").onclick=run(hooks);
+  g("x_hookAdd").onclick=run(async()=>{ g("x_hookAdd").disabled=true; try{ const h=await api("POST","/api/v1/webhooks",{url:g("x_hookUrl").value.trim()}); showSecret("Webhook の署名用シークレット",h.secret); g("x_hookUrl").value=""; await hooks(); } finally{ g("x_hookAdd").disabled=false; } });
+  // 別の画面に移ったら、表示中のキーと管理トークンを消す
+  new MutationObserver(()=>{ if(!g("view-settings").classList.contains("active")){ hideSecret(); g("x_admin").value=""; } }).observe(g("view-settings"),{attributes:true,attributeFilter:["class"]});
+  g("x_hide").onclick=hideSecret;
+  g("x_copy").onclick=run(async()=>{ await navigator.clipboard.writeText(g("x_secretVal").value); alert("コピーしました"); });
+})();
 </script>
 </body>
 </html>

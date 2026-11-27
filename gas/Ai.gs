@@ -163,8 +163,8 @@ const AI_TOOLS = [
 ];
 
 /* ===================== ツール本体 ===================== */
-function AiError(msg){ this.message = msg; }
-function aiFail_(msg){ throw new AiError(msg); }
+function AiError(msg, code){ this.message = msg; this.code = code || "validation_error"; }
+function aiFail_(msg, code){ throw new AiError(msg, code); }
 function aiCallTool_(name, args){
   const fn = AI_TOOL_FNS[name];
   if(!fn) return {content:[{type:"text", text:"そのツールはありません: " + name}], isError:true};
@@ -206,7 +206,7 @@ function aiFind_(docs, args){
   if(args.id) d = docs.find(x => x.id === String(args.id));
   else if(args.no){ const n = String(args.no).trim().toLowerCase(); d = docs.find(x => String(x.no || "").toLowerCase() === n); }
   else aiFail_("id か no を指定してください");
-  if(!d) aiFail_("書類が見つかりません: " + (args.id || args.no));
+  if(!d) aiFail_("書類が見つかりません: " + (args.id || args.no), "not_found");
   return d;
 }
 function aiSummary_(d, docs, today){
@@ -219,7 +219,7 @@ function aiSummary_(d, docs, today){
   if(d.pdfUrl) o.pdfUrl = d.pdfUrl;
   return o;
 }
-function aiSave_(d){ d.updatedAt = Date.now(); const r = upsertDoc_(d); if(!r || r.skipped) aiFail_("保存できませんでした（ほかの端末で同時に更新された可能性があります。もう一度試してください）"); return d; }
+function aiSave_(d){ d.updatedAt = Date.now(); const r = upsertDoc_(d); if(!r || r.skipped) aiFail_("保存できませんでした（ほかの端末で同時に更新された可能性があります。もう一度試してください）", "conflict"); return d; }
 
 // 項目の確認と反映（create／update／revise 共通）。partial=true なら渡した項目だけ
 function aiApply_(d, a, partial){
@@ -307,7 +307,7 @@ function aiCreate_(a){
 }
 function aiUpdateDraft_(a){
   const docs = aiDocs_(), d = aiFind_(docs, {id:a.id});
-  if(!d.aiDraft) aiFail_("本人が作った（または確認・保存した）書類は変更できません。作り直す場合は revise_document で改訂版を作ってください");
+  if(!d.aiDraft) aiFail_("本人が作った（または確認・保存した）書類は変更できません。作り直す場合は revise_document で改訂版を作ってください", "not_editable");
   const x = JSON.parse(JSON.stringify(d)); const b = {}; Object.keys(a).forEach(k => { if(k !== "id") b[k] = a[k]; });
   aiApply_(x, b, true);
   if(b.date !== undefined && b.due === undefined && x.type !== "receipt"){ const S = aiSettings_(); x.due = aiAddDays_(x.date, x.type === "invoice" ? S.invDays : S.estDays); }

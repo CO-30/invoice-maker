@@ -1,0 +1,21 @@
+name = "redseal-api"
+main = "src/index.mjs"
+compatibility_date = "2026-01-01"
+workers_dev = true
+
+# Webhook の差分確認と再送（5分ごと）
+[triggers]
+crons = ["*/5 * * * *"]
+
+[durable_objects]
+bindings = [{ name = "STORE", class_name = "RedsealStore" }]
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["RedsealStore"]
+
+# 秘密でない設定だけをここに書く。秘密は wrangler secret put（.env.example を参照）
+[vars]
+ALLOWED_ORIGINS = "https://co-30.github.io"
+RATE_LIMIT_PER_MIN = "60"
+AUTH_FAIL_LIMIT_PER_MIN = "20"
