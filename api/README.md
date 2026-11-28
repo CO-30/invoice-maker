@@ -21,7 +21,7 @@ Muse などの外部AIが、REST API（または MCP）で見積・請求・領�
    npx wrangler@4 secret put GAS_BRIDGE_KEY   # 2 のキー
    npx wrangler@4 secret put ADMIN_TOKEN      # 必ず openssl rand -base64 32 などの乱数（32文字以上）。覚えやすい言葉は使わない
    ```
-   **画面だけで設置する場合（コマンド不要）**：コードを GitHub に反映したあと、Cloudflare の「Workers & Pages」→「Create application」→ GitHub → このリポジトリを選び、名前は `redseal-api`（wrangler.toml と同じ）、ルートディレクトリは `api`、デプロイコマンドは `npx wrangler deploy` にする。デプロイ後、Worker の Settings → Variables and Secrets に秘密の3つを Secret で登録する。この方法なら下の GitHub Actions 用の Secrets は不要です（Actions の「Deploy API」は無効にしてください）。
+   **画面だけで設置する場合（コマンド不要）**：コードを GitHub に反映したあと、Cloudflare の「Workers & Pages」→「Create application」→ GitHub → このリポジトリを選び、名前は `redseal-api`（wrangler.toml と同じ）、ルートディレクトリは `api`、デプロイコマンドは `npx wrangler deploy` にする。デプロイ後、Worker の Settings → Variables and Secrets に秘密の3つを Secret で登録する。この方法なら下の GitHub Actions 用の Secrets は不要です（Actions の「Deploy API」は手動実行のみなので、そのままで構いません）。
    GitHub から自動で反映する場合は、リポジトリの Secrets に `CLOUDFLARE_API_TOKEN`（テンプレート「Edit Cloudflare Workers」）と `CLOUDFLARE_ACCOUNT_ID` を登録して、Actions の「Deploy API」を実行します。秘密の3つは Cloudflare の画面（Worker → Settings → Variables and Secrets、種類は Secret）でも登録できます。
 4. アプリを別の場所で公開している場合は、`wrangler.toml` の `ALLOWED_ORIGINS` を直す。
 

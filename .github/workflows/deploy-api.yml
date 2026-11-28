@@ -1,9 +1,6 @@
 name: Deploy API (Cloudflare Workers)
-# api/ が変わって main に push されたら、テストしてから Workers に反映する。手動実行も可
+# 手動実行のみ（Cloudflare の画面から GitHub 連携で設置する場合は使いません）
 on:
-  push:
-    branches: [main]
-    paths: ["api/**"]
   workflow_dispatch:
 
 jobs:
