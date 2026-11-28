@@ -653,7 +653,9 @@ function handle_(e){
     if(isMcp_(req)) return mcpHandle_(req, e);
     if(e.parameter && e.parameter.ai !== undefined && !req.action) return mcpInfo_(e);
   }
-  if(req.key !== API_KEY) return out_({ok:false,error:"unauthorized"});
+  // 合言葉が初期値・空のままだと同期は使えない（公開されている値で読み書きされないように）。
+  // 文字列を分けているのは、初期値を全置換して合言葉を入れても動くようにするため
+  if(!API_KEY || API_KEY === "change-me" + "-1234" || req.key !== API_KEY) return out_({ok:false,error:"unauthorized"});
   const lock = LockService.getScriptLock(); lock.waitLock(20000);
   try{
     switch(req.action){
@@ -1513,7 +1515,7 @@ const API_OPS = {
 <script src="feedback/feedback-widget.js?v=1.14.0"></script>
 <script>
 /* ============ 定数・既定 ============ */
-const APP_VERSION="1.16.0";
+const APP_VERSION="1.16.1";
 // 要望の受付先（共通の要望受付GASのウェブアプリURL …/exec）。空なら送信欄は「未設定」と表示
 const FEEDBACK_URL="https://script.google.com/macros/s/AKfycbwRiAKzdRhW0SQFyNuoIlGmPQx9rGA199TT0weaKZ-v3-G4nmfdddiot9f45Rs9mSNCQQ/exec";
 const DEFAULT_STAMP = ""; // 社判は利用者が設定で登録する（見本の印は入れない）

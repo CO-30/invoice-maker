@@ -70,9 +70,33 @@ test("不正なJSONと不正なリクエスト", ()=>{
   eq(r.error.code, -32600);
 });
 
+test("同期の合言葉が初期値・空のままなら、同期APIはすべて拒否する", ()=>{
+  for(const base of ["Code.gs","Code.generic.gs"]){
+    const files = [base,"AiShared.gs","Ai.gs","Api.gs"];
+    for(const [apiKey, sent] of [[null,"change-me-1234"], ["",""]]){
+      const g = env({files, apiKey});
+      for(const action of ["ping","list","upsert","delete","getSettings","putSettings","savePdf","import"]){
+        const r = g.post({key:sent, action});
+        eq([r.ok, r.error], [false, "unauthorized"], base+" "+action);
+      }
+      eq(Object.keys(g.sheets), [], base+"：シートに触らない");
+    }
+    const g = env({files, apiKey:"sync-secret"});
+    eq(g.post({key:"sync-secret", action:"ping"}).ok, true, base);
+    eq(g.post({key:"change-me-1234", action:"ping"}).ok, false, base);
+  }
+});
+
+test("案内どおりでなく全置換で合言葉を入れても同期できる", ()=>{
+  for(const base of ["Code.gs","Code.generic.gs"]){
+    const src = ["AiShared.gs","Ai.gs","Api.gs",base].map(f => fs.readFileSync(GAS_DIR+"/"+f, "utf8")).join("\n").split("change-me-1234").join("sync-secret");
+    eq(env({src}).post({key:"sync-secret", action:"ping"}).ok, true, base);
+  }
+});
+
 test("従来の同期API（action）はそのまま動く", ()=>{
-  const g = env();
-  const r = g.post({key:"change-me-1234", action:"ping"});
+  const g = env({apiKey:"sync-secret"});
+  const r = g.post({key:"sync-secret", action:"ping"});
   eq(r.ok, true);
 });
 
@@ -98,11 +122,11 @@ test("create_document：番号・期限・AI下書き", ()=>{
 });
 
 test("create_document：既存（削除済み含む）の最大＋1、設定の頭文字と日数", ()=>{
-  const g = env();
+  const g = env({apiKey:"sync-secret"});
   g.api.putSettings_({prefixEst:"M", prefixInv:"S", prefixRcp:"U", estDays:14, invDays:10, taxRate:"8", estValid:"2週間"});
   g.seed({id:"a1", type:"invoice", base:"2611-007", no:"S2611-007", date:"2026-11-01", client:"x", items:[]});
   g.seed({id:"a2", type:"invoice", base:"2611-009", no:"S2611-009", date:"2026-11-02", client:"y", items:[], deleted:true});
-  g.api.doPost({postData:{contents:JSON.stringify({key:"change-me-1234", action:"delete", id:"a2"})}, parameter:{}});
+  g.api.doPost({postData:{contents:JSON.stringify({key:"sync-secret", action:"delete", id:"a2"})}, parameter:{}});
   const r = g.call("create_document", {type:"estimate", client:"z", items:[item("a", 1000)]});
   const d = g.doc(r.data.document.id);
   eq([d.base, d.no, d.due, d.taxRate, d.validText], ["2611-010","M2611-010","2026-12-10","8","2週間"]);

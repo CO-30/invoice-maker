@@ -2,6 +2,7 @@ name = "redseal-api"
 main = "src/index.mjs"
 compatibility_date = "2026-01-01"
 workers_dev = true
+preview_urls = false
 
 # Webhook の差分確認と再送（5分ごと）
 [triggers]

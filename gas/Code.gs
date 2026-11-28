@@ -47,7 +47,9 @@ function handle_(e){
     if(isMcp_(req)) return mcpHandle_(req, e);
     if(e.parameter && e.parameter.ai !== undefined && !req.action) return mcpInfo_(e);
   }
-  if(req.key !== API_KEY) return out_({ok:false,error:"unauthorized"});
+  // 合言葉が初期値・空のままだと同期は使えない（公開されている値で読み書きされないように）。
+  // 文字列を分けているのは、初期値を全置換して合言葉を入れても動くようにするため
+  if(!API_KEY || API_KEY === "change-me" + "-1234" || req.key !== API_KEY) return out_({ok:false,error:"unauthorized"});
   const lock = LockService.getScriptLock(); lock.waitLock(20000);
   try{
     switch(req.action){

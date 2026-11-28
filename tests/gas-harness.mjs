@@ -26,7 +26,7 @@ function fakeSheet(name){
 }
 
 // files: 読み込む .gs（既定は Code.gs＋AiShared.gs＋Ai.gs）。src を渡すとその文字列を使う
-export function loadGas({files=["Code.gs","AiShared.gs","Ai.gs","Api.gs"], src=null, now=null, props={}, lockBusy=false, lockCalls=null} = {}){
+export function loadGas({files=["Code.gs","AiShared.gs","Ai.gs","Api.gs"], src=null, now=null, props={}, lockBusy=false, lockCalls=null, apiKey=null} = {}){
   const sheets = {};
   const ss = {
     getSheetByName: n => sheets[n] || null,
@@ -68,7 +68,9 @@ export function loadGas({files=["Code.gs","AiShared.gs","Ai.gs","Api.gs"], src=n
     }
   };
   vm.createContext(ctx);
-  const code = src != null ? src : files.map(f => fs.readFileSync(path.join(GAS_DIR, f), "utf8")).join("\n");
+  let code = src != null ? src : files.map(f => fs.readFileSync(path.join(GAS_DIR, f), "utf8")).join("\n");
+  // apiKey：利用者が同期の合言葉を書き換えた状態を再現する
+  if(apiKey != null) code = code.replace(/^const API_KEY = "[^"]*";/m, () => "const API_KEY = " + JSON.stringify(apiKey) + ";");
   const api = vm.runInContext(code + "\n;({doGet, doPost, setupAI: typeof setupAI==='function'?setupAI:null, resetAIKey: typeof resetAIKey==='function'?resetAIKey:null, disableAI: typeof disableAI==='function'?disableAI:null, setupApi: typeof setupApi==='function'?setupApi:null, upsertDoc_, putSettings_, listDocs_})", ctx);
 
   // JSON-RPC を送る（GAS のウェブアプリへの POST を模擬）
